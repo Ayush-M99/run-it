@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "run_it",
-    "slug": "run_it",
+    "name": "Run-It",
+    "slug": "run-it",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -10,21 +10,45 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#0b1a2b"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": false,
+      "bundleIdentifier": "com.runit.app",
+      "infoPlist": {
+        "UIBackgroundModes": ["location", "fetch"],
+        "NSLocationWhenInUseUsageDescription": "Run-It needs your location to track your runs.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Run-It tracks your run in the background so the screen can stay off while you run.",
+        "NSLocationAlwaysUsageDescription": "Run-It tracks your run in the background so the screen can stay off while you run."
+      }
     },
     "android": {
+      "package": "com.runit.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#0b1a2b"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Run-It needs your location to track your runs, even when the app is in the background.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      "@rnmapbox/maps"
+    ],
+    "extra": {
+      "supabaseUrl": "PASTE_SUPABASE_URL_HERE",
+      "supabaseAnonKey": "PASTE_SUPABASE_ANON_KEY_HERE",
+      "mapboxPublicToken": "PASTE_MAPBOX_PUBLIC_TOKEN_HERE"
     }
   }
 }

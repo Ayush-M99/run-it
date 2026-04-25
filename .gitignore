@@ -31,7 +31,11 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
+
+# generated region data (run scripts/fetch_regions.ts to regenerate)
+data/regions.geojson
 
 # typescript
 *.tsbuildinfo
