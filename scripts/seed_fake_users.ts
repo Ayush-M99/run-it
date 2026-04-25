@@ -29,7 +29,7 @@ const FAKE_USERS = [
   ['runner.hex@example.com', 'Hex'],
 ] as const;
 
-const RUNS_TOTAL = 30;
+const RUNS_TOTAL = 80;
 const POINTS_PER_RUN = 80;
 
 type Region = { id: number; geojson: string };
@@ -129,11 +129,16 @@ async function main() {
   console.log(`Generating ${RUNS_TOTAL} synthetic runs...`);
   for (let i = 0; i < RUNS_TOTAL; i++) {
     const userId = userIds[i % userIds.length];
-    const region = regions[Math.floor(Math.random() * regions.length)];
+    // Round-robin over regions so every region gets at least a few runs.
+    const region = regions[i % regions.length];
     const path = randomWalk(region.poly, POINTS_PER_RUN);
     if (path.length < 10) continue;
 
-    const daysAgo = Math.floor(Math.random() * 7);
+    // Bias toward today + yesterday so the demo's leaderboards + map look full.
+    const daysAgo =
+      Math.random() < 0.6
+        ? Math.floor(Math.random() * 2)
+        : 2 + Math.floor(Math.random() * 5);
     const startedAt = new Date(Date.now() - daysAgo * 86_400_000 - Math.random() * 6 * 3600_000);
     const endedAt = new Date(startedAt.getTime() + path.length * 4000);
 

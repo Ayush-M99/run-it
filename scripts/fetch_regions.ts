@@ -86,9 +86,14 @@ async function main() {
     });
   }
 
+  // Drop the parent admin entry (same name as the queried city) — its multi-way
+  // outer boundary almost always self-intersects when joined naively, and it
+  // overlaps every child polygon anyway, doubling up scores.
+  const filtered = features.filter((f) => f.properties.name.toLowerCase() !== city.toLowerCase());
+
   // Dedupe by name (keep the largest polygon by ring length).
   const byName = new Map<string, typeof features[number]>();
-  for (const f of features) {
+  for (const f of filtered) {
     const prev = byName.get(f.properties.name);
     if (!prev || f.geometry.coordinates[0].length > prev.geometry.coordinates[0].length) {
       byName.set(f.properties.name, f);

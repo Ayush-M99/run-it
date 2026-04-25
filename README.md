@@ -76,6 +76,28 @@ Two filters, applied client-side before a point ever enters the buffer: accuracy
 
 ---
 
+## Quick start — local Supabase via Docker (no cloud account needed)
+
+This is the fastest path to a populated, queryable backend on your own machine. Requires Docker Desktop running.
+
+```bash
+npm install
+npx supabase start                                # boots Postgres+PostGIS+pg_cron+auth+realtime+studio in Docker
+                                                  # (pulls ~2GB on first run)
+npx supabase status                               # copy URL + publishable + secret keys
+# write them into .env (see .env.example)
+
+# Apply schema/functions/cron — already mirrored under supabase/migrations/, so:
+npx supabase db reset --no-seed                   # OR pipe each *.sql via:  docker exec -i supabase_db_run_it psql -U postgres -d postgres < supabase/schema.sql
+
+npm run regions:fetch -- "Manhattan"              # any city; falls back to community-board polygons
+npm run regions:load                              # GeoJSON -> regions table
+npm run seed                                      # 8 fake users, 80 random-walk runs, snapshot
+npm run doctor                                    # confirms env + connectivity + RPCs
+```
+
+After this, Supabase Studio is at http://127.0.0.1:54323. The mobile app reads from `http://127.0.0.1:54321` — works on Android emulator if you replace `127.0.0.1` with `10.0.2.2`, and on a physical phone over the same Wi-Fi if you swap in your computer's LAN IP.
+
 ## Setup (one-time, before any `expo start`)
 
 ### 1. External accounts
