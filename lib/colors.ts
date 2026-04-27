@@ -10,7 +10,10 @@ function hash32(s: string): number {
   return h;
 }
 
-export function userColor(userId: string, opts?: { saturation?: number; lightness?: number }): string {
+export function userColor(
+  userId: string,
+  opts?: { saturation?: number; lightness?: number },
+): string {
   const hue = hash32(userId) % 360;
   const sat = opts?.saturation ?? 70;
   const light = opts?.lightness ?? 55;

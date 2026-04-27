@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ActivityIndicator,
+  ScrollView,
+} from 'react-native';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { userColorHex } from '../lib/colors';
@@ -31,9 +38,17 @@ export default function Profile() {
       const [profile, runs, wins, leadingToday, recentRuns] = await Promise.all([
         supabase.from('profiles').select('display_name').eq('user_id', uid).single(),
         supabase.from('runs').select('distance_m', { count: 'exact' }).eq('user_id', uid),
-        supabase.from('daily_region_winners').select('region_id', { count: 'exact', head: true }).eq('user_id', uid),
+        supabase
+          .from('daily_region_winners')
+          .select('region_id', { count: 'exact', head: true })
+          .eq('user_id', uid),
         countLeadingRegions(uid, today),
-        supabase.from('runs').select('id,started_at,distance_m').eq('user_id', uid).order('started_at', { ascending: false }).limit(5),
+        supabase
+          .from('runs')
+          .select('id,started_at,distance_m')
+          .eq('user_id', uid)
+          .order('started_at', { ascending: false })
+          .limit(5),
       ]);
       const totalDist = (runs.data ?? []).reduce((sum, r) => sum + Number(r.distance_m ?? 0), 0);
       setStats({
@@ -48,7 +63,12 @@ export default function Profile() {
   }, [session]);
 
   if (!session) return null;
-  if (!stats) return <View style={styles.root}><ActivityIndicator color="#fff" style={{ marginTop: 64 }} /></View>;
+  if (!stats)
+    return (
+      <View style={styles.root}>
+        <ActivityIndicator color="#fff" style={{ marginTop: 64 }} />
+      </View>
+    );
 
   return (
     <ScrollView style={styles.root} contentContainerStyle={{ padding: 24 }}>
@@ -125,15 +145,45 @@ const styles = StyleSheet.create({
   statsGrid: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 20 },
   stat: { alignItems: 'center' },
   statValue: { color: '#3aa0ff', fontSize: 28, fontWeight: '700' },
-  statLabel: { color: '#7790aa', fontSize: 12, marginTop: 4, textTransform: 'uppercase', letterSpacing: 1 },
-  callout: { backgroundColor: '#16263a', borderRadius: 10, padding: 14, marginBottom: 24, alignItems: 'center' },
+  statLabel: {
+    color: '#7790aa',
+    fontSize: 12,
+    marginTop: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  callout: {
+    backgroundColor: '#16263a',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 24,
+    alignItems: 'center',
+  },
   calloutLabel: { color: '#7790aa', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 },
   calloutValue: { color: '#ffd84a', fontSize: 18, fontWeight: '600', marginTop: 4 },
-  sectionLabel: { color: '#7790aa', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 },
-  runRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#16263a' },
+  sectionLabel: {
+    color: '#7790aa',
+    fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  runRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#16263a',
+  },
   runDate: { color: '#fff', fontSize: 14 },
   runDist: { color: '#3aa0ff', fontSize: 14, fontWeight: '600' },
   empty: { color: '#7790aa', textAlign: 'center', marginTop: 12 },
-  signOut: { backgroundColor: '#16263a', padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 32 },
+  signOut: {
+    backgroundColor: '#16263a',
+    padding: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 32,
+  },
   signOutText: { color: '#ff8b8b', fontSize: 15, fontWeight: '600' },
 });

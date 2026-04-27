@@ -81,6 +81,36 @@ $$;
 
 grant execute on function public.process_run(uuid) to authenticated;
 
+-- ─── current_region_leaders: live leader per region for a given date ───────
+-- Used by the home map so today's live leaders can color regions before the
+-- midnight daily snapshot runs.
+
+create or replace function public.current_region_leaders(p_date date default current_date)
+returns table(region_id int, user_id uuid, points int, distance_m numeric)
+language sql
+stable
+security definer set search_path = public
+as $$
+  with ranked as (
+    select
+      rs.region_id,
+      rs.user_id,
+      rs.points,
+      rs.distance_m,
+      row_number() over (
+        partition by rs.region_id
+        order by rs.points desc, rs.distance_m desc, rs.user_id
+      ) as rk
+    from region_scores rs
+    where rs.date = p_date and rs.points > 0
+  )
+  select ranked.region_id, ranked.user_id, ranked.points, ranked.distance_m
+  from ranked
+  where ranked.rk = 1;
+$$;
+
+grant execute on function public.current_region_leaders(date) to anon, authenticated;
+
 -- ─── snapshot_daily_winners: pick top scorer per region for a given date ────
 -- Idempotent on (region_id, date).
 

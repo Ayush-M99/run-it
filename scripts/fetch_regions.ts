@@ -5,7 +5,12 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-type OverpassMember = { type: string; ref: number; role: string; geometry?: Array<{ lat: number; lon: number }> };
+type OverpassMember = {
+  type: string;
+  ref: number;
+  role: string;
+  geometry?: Array<{ lat: number; lon: number }>;
+};
 type OverpassElement = {
   type: 'relation' | 'way';
   id: number;
@@ -51,7 +56,7 @@ async function main() {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
-      'Accept': 'application/json',
+      Accept: 'application/json',
       'User-Agent': 'run-it-mvp/0.1 (https://github.com/local)',
     },
     body: 'data=' + encodeURIComponent(buildQuery(city)),
@@ -92,7 +97,7 @@ async function main() {
   const filtered = features.filter((f) => f.properties.name.toLowerCase() !== city.toLowerCase());
 
   // Dedupe by name (keep the largest polygon by ring length).
-  const byName = new Map<string, typeof features[number]>();
+  const byName = new Map<string, (typeof features)[number]>();
   for (const f of filtered) {
     const prev = byName.get(f.properties.name);
     if (!prev || f.geometry.coordinates[0].length > prev.geometry.coordinates[0].length) {
@@ -106,7 +111,9 @@ async function main() {
   writeFileSync(out, JSON.stringify({ type: 'FeatureCollection', features: deduped }, null, 2));
   console.log(`Wrote ${deduped.length} regions to ${out}`);
   if (deduped.length === 0) {
-    console.error('No regions found. Check the city name spelling, or try a smaller administrative unit.');
+    console.error(
+      'No regions found. Check the city name spelling, or try a smaller administrative unit.',
+    );
     process.exit(1);
   }
   if (deduped.length > 30) {

@@ -107,7 +107,11 @@ export async function startRun(): Promise<{ ok: boolean; reason?: string }> {
   return { ok: true };
 }
 
-export async function stopRun(): Promise<{ points: RunPoint[]; startedAt: number; endedAt: number } | null> {
+export async function stopRun(): Promise<{
+  points: RunPoint[];
+  startedAt: number;
+  endedAt: number;
+} | null> {
   const isRunning = await Location.hasStartedLocationUpdatesAsync(BG_TASK);
   if (isRunning) await Location.stopLocationUpdatesAsync(BG_TASK);
 

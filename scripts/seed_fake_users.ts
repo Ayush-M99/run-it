@@ -4,6 +4,7 @@
 
 import { config } from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
+import { randomWalk } from '../lib/geo';
 
 config();
 
@@ -34,60 +35,6 @@ const POINTS_PER_RUN = 80;
 
 type Region = { id: number; geojson: string };
 
-function bbox(poly: GeoJSON.Polygon): { minX: number; minY: number; maxX: number; maxY: number } {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const ring of poly.coordinates) {
-    for (const [x, y] of ring) {
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
-    }
-  }
-  return { minX, minY, maxX, maxY };
-}
-
-function pointInPolygon(x: number, y: number, poly: GeoJSON.Polygon): boolean {
-  const ring = poly.coordinates[0];
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, yi] = ring[i];
-    const [xj, yj] = ring[j];
-    const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi + 1e-12) + xi;
-    if (intersect) inside = !inside;
-  }
-  return inside;
-}
-
-function randomWalk(poly: GeoJSON.Polygon, n: number): Array<[number, number]> {
-  const b = bbox(poly);
-  // Find a starting point inside the polygon.
-  let start: [number, number] | null = null;
-  for (let i = 0; i < 200 && !start; i++) {
-    const x = b.minX + Math.random() * (b.maxX - b.minX);
-    const y = b.minY + Math.random() * (b.maxY - b.minY);
-    if (pointInPolygon(x, y, poly)) start = [x, y];
-  }
-  if (!start) return [];
-  const pts: Array<[number, number]> = [start];
-  const stepDeg = 0.00018; // ~20 m
-  let heading = Math.random() * Math.PI * 2;
-  for (let i = 1; i < n; i++) {
-    heading += (Math.random() - 0.5) * 0.4;
-    let [x, y] = pts[pts.length - 1];
-    let nx = x + Math.cos(heading) * stepDeg;
-    let ny = y + Math.sin(heading) * stepDeg;
-    if (!pointInPolygon(nx, ny, poly)) {
-      // Bounce by flipping heading.
-      heading += Math.PI;
-      nx = x + Math.cos(heading) * stepDeg;
-      ny = y + Math.sin(heading) * stepDeg;
-    }
-    pts.push([nx, ny]);
-  }
-  return pts;
-}
-
 async function ensureUser(email: string, displayName: string): Promise<string> {
   // Try create. If it already exists, look it up.
   const { data: created, error: createErr } = await sb.auth.admin.createUser({
@@ -111,7 +58,10 @@ async function ensureUser(email: string, displayName: string): Promise<string> {
 async function main() {
   const { data: regs, error: rErr } = await sb.rpc('regions_as_geojson');
   if (rErr) throw rErr;
-  const regions = (regs as Region[]).map((r) => ({ id: r.id, poly: JSON.parse(r.geojson) as GeoJSON.Polygon }));
+  const regions = (regs as Region[]).map((r) => ({
+    id: r.id,
+    poly: JSON.parse(r.geojson) as GeoJSON.Polygon,
+  }));
   if (regions.length === 0) {
     console.error('No regions in DB. Run scripts/load_regions.ts first.');
     process.exit(1);
@@ -136,9 +86,7 @@ async function main() {
 
     // Bias toward today + yesterday so the demo's leaderboards + map look full.
     const daysAgo =
-      Math.random() < 0.6
-        ? Math.floor(Math.random() * 2)
-        : 2 + Math.floor(Math.random() * 5);
+      Math.random() < 0.6 ? Math.floor(Math.random() * 2) : 2 + Math.floor(Math.random() * 5);
     const startedAt = new Date(Date.now() - daysAgo * 86_400_000 - Math.random() * 6 * 3600_000);
     const endedAt = new Date(startedAt.getTime() + path.length * 4000);
 
@@ -193,7 +141,9 @@ function pathDistance(path: Array<[number, number]>): number {
     const [lng2, lat2] = path[i];
     const dLat = toRad(lat2 - lat1);
     const dLng = toRad(lng2 - lng1);
-    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
     total += 2 * R * Math.asin(Math.sqrt(a));
   }
   return total;

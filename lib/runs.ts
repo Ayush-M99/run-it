@@ -16,9 +16,7 @@ export async function uploadRun(args: {
 
   if (points.length < 2) return { error: 'Run too short — need at least 2 GPS points.' };
 
-  const distanceM = pathDistanceMeters(
-    points.map((p) => ({ latitude: p.lat, longitude: p.lng })),
-  );
+  const distanceM = pathDistanceMeters(points.map((p) => ({ latitude: p.lat, longitude: p.lng })));
 
   const { data: runRow, error: runErr } = await supabase
     .from('runs')

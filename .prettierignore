@@ -1,0 +1,9 @@
+node_modules/
+.expo/
+dist/
+web-build/
+coverage/
+data/regions.geojson
+package-lock.json
+supabase/.branches/
+supabase/.temp/

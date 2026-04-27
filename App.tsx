@@ -83,7 +83,9 @@ function Gate() {
   if (!session) return <SignIn />;
   return (
     <NavigationContainer theme={navTheme}>
-      <Stack.Navigator screenOptions={{ headerStyle: { backgroundColor: '#0b1a2b' }, headerTintColor: '#fff' }}>
+      <Stack.Navigator
+        screenOptions={{ headerStyle: { backgroundColor: '#0b1a2b' }, headerTintColor: '#fff' }}
+      >
         <Stack.Screen name="Tabs" component={TabsNav} options={{ headerShown: false }} />
         <Stack.Screen
           name="Leaderboard"

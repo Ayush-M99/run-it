@@ -17,14 +17,29 @@ async function run(): Promise<Check[]> {
   const mapboxPub = process.env.EXPO_PUBLIC_MAPBOX_PUBLIC_TOKEN;
   const mapboxDl = process.env.MAPBOX_DOWNLOADS_TOKEN || process.env.RNMAPBOX_MAPS_DOWNLOAD_TOKEN;
 
-  checks.push({ name: 'EXPO_PUBLIC_SUPABASE_URL set', ok: !!url && !url.startsWith('PASTE_'), detail: url ? '' : 'missing' });
-  checks.push({ name: 'EXPO_PUBLIC_SUPABASE_ANON_KEY set', ok: !!anon && !anon.startsWith('PASTE_') });
+  checks.push({
+    name: 'EXPO_PUBLIC_SUPABASE_URL set',
+    ok: !!url && !url.startsWith('PASTE_'),
+    detail: url ? '' : 'missing',
+  });
+  checks.push({
+    name: 'EXPO_PUBLIC_SUPABASE_ANON_KEY set',
+    ok: !!anon && !anon.startsWith('PASTE_'),
+  });
   checks.push({ name: 'SUPABASE_SERVICE_ROLE_KEY set (server only)', ok: !!serviceKey });
-  checks.push({ name: 'EXPO_PUBLIC_MAPBOX_PUBLIC_TOKEN set', ok: !!mapboxPub && mapboxPub.startsWith('pk.') });
-  checks.push({ name: 'MAPBOX_DOWNLOADS_TOKEN set (or RNMAPBOX_MAPS_DOWNLOAD_TOKEN)', ok: !!mapboxDl && mapboxDl.startsWith('sk.') });
+  checks.push({
+    name: 'EXPO_PUBLIC_MAPBOX_PUBLIC_TOKEN set',
+    ok: !!mapboxPub && mapboxPub.startsWith('pk.'),
+  });
+  checks.push({
+    name: 'MAPBOX_DOWNLOADS_TOKEN set (or RNMAPBOX_MAPS_DOWNLOAD_TOKEN)',
+    ok: !!mapboxDl && mapboxDl.startsWith('sk.'),
+  });
 
   if (url && anon && !url.startsWith('PASTE_')) {
-    const sb = createClient(url, anon, { auth: { persistSession: false, autoRefreshToken: false } });
+    const sb = createClient(url, anon, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
     try {
       const { data, error } = await sb.from('regions').select('id', { head: true, count: 'exact' });
       void data;
@@ -41,7 +56,11 @@ async function run(): Promise<Check[]> {
         detail: error ? error.message : `${(data as unknown[] | null)?.length ?? 0} regions`,
       });
     } catch (e: any) {
-      checks.push({ name: 'regions_as_geojson() RPC exists', ok: false, detail: e?.message ?? String(e) });
+      checks.push({
+        name: 'regions_as_geojson() RPC exists',
+        ok: false,
+        detail: e?.message ?? String(e),
+      });
     }
   }
 
@@ -57,7 +76,9 @@ run().then((checks) => {
   }
   console.log('');
   if (bad === 0) {
-    console.log(`All ${checks.length} checks passed. You're ready for: eas build --profile development --platform android`);
+    console.log(
+      `All ${checks.length} checks passed. You're ready for: eas build --profile development --platform android`,
+    );
   } else {
     console.log(`${bad} check(s) failed. Fix the above, then re-run.`);
     process.exit(1);

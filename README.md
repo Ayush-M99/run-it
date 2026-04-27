@@ -39,6 +39,7 @@ Territory-based running game. You run in real life → your distance inside each
 7. The Map home screen colors each region by yesterday's winner (HSL hashed from their uuid) and outlines regions you won in gold.
 
 ### Anti-cheat
+
 Two filters, applied client-side before a point ever enters the buffer: accuracy gate (≤ 50 m) and instantaneous speed gate (≤ 20 km/h vs the prior accepted point). Anything beyond this is out of scope for the MVP.
 
 ---
@@ -103,6 +104,7 @@ After this, Supabase Studio is at http://127.0.0.1:54323. The mobile app reads f
 ### 1. External accounts
 
 **Mapbox** — https://account.mapbox.com (free)
+
 - Create a **public token** (default scopes) → goes into `.env` as `EXPO_PUBLIC_MAPBOX_PUBLIC_TOKEN` and into `app.json` → `extra.mapboxPublicToken`.
 - Create a **secret token** with the `DOWNLOADS:READ` scope → register as an EAS secret (used at native build time, never in the JS bundle):
   ```bash
@@ -110,6 +112,7 @@ After this, Supabase Studio is at http://127.0.0.1:54323. The mobile app reads f
   ```
 
 **Supabase** — https://supabase.com (free)
+
 1. Create a project. Settings → API:
    - `Project URL` → `EXPO_PUBLIC_SUPABASE_URL`
    - `anon` public key → `EXPO_PUBLIC_SUPABASE_ANON_KEY`
@@ -123,6 +126,7 @@ After this, Supabase Studio is at http://127.0.0.1:54323. The mobile app reads f
 If pg_cron isn't on your plan, skip `cron.sql` and run `select snapshot_daily_winners(current_date - 1);` manually each day, or wrap it in a Supabase Edge Function on a daily cron.
 
 **EAS** (Expo build service)
+
 ```bash
 npm i -g eas-cli
 eas login        # sign up at expo.dev if needed
@@ -130,24 +134,29 @@ eas init         # links the project
 ```
 
 ### 2. Configure local env
+
 ```bash
 cp .env.example .env
 # edit .env and paste Supabase URL + anon + service_role + Mapbox tokens
 ```
+
 Also paste the same Supabase URL + anon key + Mapbox public token into `app.json` → `extra` (so they're available at runtime via `Constants.expoConfig.extra`).
 
 ### 3. Seed your city's regions
+
 ```bash
 npx tsx scripts/fetch_regions.ts "Bengaluru"      # or your city / district
 npx tsx scripts/load_regions.ts                   # loads data/regions.geojson into Supabase
 ```
 
 ### 4. Seed fake demo users (so leaderboards aren't empty)
+
 ```bash
 npx tsx scripts/seed_fake_users.ts
 ```
 
 ### 5. Build the dev client and install on a phone
+
 ```bash
 eas build --profile development --platform android
 # wait ~15 min queue + ~10 min build, download APK, install on phone
@@ -161,9 +170,25 @@ iOS works too — same `--platform ios` — but Android is the simpler permissio
 
 ## Verification
 
+Automated checks:
+
+```bash
+npm run typecheck
+npm run lint
+npm run format:check
+npm run test:unit
+
+# Optional locally; CI always runs it against a PostGIS service container.
+TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres npm run test:integration
+
+npm run check
+```
+
+`npm run test:integration` is skipped when `TEST_DATABASE_URL` is not set. Point it at a disposable Postgres database with PostGIS available; the test resets the public schema objects it owns.
+
 1. Open the app → sign up → drop into the Map tab → see real neighborhood polygons drawn.
 2. Switch to the Run tab → grant **Always** location → tap **Start** → walk a short loop → tap **Stop**.
-3. The "Run saved" alert shows your distance. Switch to Map → tap the region you ran in → see your row at the top of today's leaderboard.
+3. The post-run summary shows distance, points, duration, and GPS points. Switch to Map → tap the region you ran in → see your row at the top of today's leaderboard.
 4. Re-run the seed script (or run with a second account) → leaderboard reranks live via realtime.
 5. Run `select * from daily_region_winners order by date desc limit 5;` in Supabase → see the snapshot rows.
 
