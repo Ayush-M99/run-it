@@ -5,7 +5,7 @@ import { palette as P } from '../lib/ui';
 import { PrimaryButton, SecondaryButton } from '../lib/ui/components';
 
 export default function SignIn() {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, startPreview } = useAuth();
   const [mode, setMode] = useState<'in' | 'up'>('in');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -77,6 +77,10 @@ export default function SignIn() {
         label={mode === 'in' ? 'New here? Create account' : 'Have account? Sign in'}
         onPress={() => setMode(mode === 'in' ? 'up' : 'in')}
       />
+
+      {Platform.OS === 'web' && (
+        <SecondaryButton label="Preview app UI" onPress={startPreview} style={{ marginTop: 10 }} />
+      )}
     </KeyboardAvoidingView>
   );
 }

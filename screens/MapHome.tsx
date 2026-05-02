@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ActivityIndicator,
+  Platform,
+} from 'react-native';
 import { MapView, Camera, ShapeSource, FillLayer, LineLayer } from '@rnmapbox/maps';
 import Constants from 'expo-constants';
 import { supabase } from '../lib/supabase';
@@ -20,8 +27,20 @@ type TerritoryOwner = {
 const PARCHMENT_STYLE =
   (Constants.expoConfig?.extra?.mapboxParchmentStyleUrl as string | undefined) ??
   'mapbox://styles/mapbox/outdoors-v12';
+const MAPBOX_TOKEN =
+  process.env.EXPO_PUBLIC_MAPBOX_PUBLIC_TOKEN ??
+  (Constants.expoConfig?.extra?.mapboxPublicToken as string | undefined);
+const HAS_MAPBOX_TOKEN = !!MAPBOX_TOKEN && !MAPBOX_TOKEN.startsWith('PASTE_');
 
 const FALLBACK_CENTER: [number, number] = [-74.006, 40.7128];
+const PREVIEW_REGIONS = [
+  { id: 101, name: 'Harbor Loop', color: '#5b9bd5', leader: 'Preview Runner', points: 420 },
+  { id: 102, name: 'Market Mile', color: '#f0b64d', leader: 'Bex', points: 370 },
+  { id: 103, name: 'River Ward', color: '#57a773', leader: 'Cam', points: 280 },
+  { id: 104, name: 'Old Town', color: '#c65f63', leader: 'Dee', points: 210 },
+  { id: 105, name: 'Parkside', color: '#8f6bd9', leader: 'Eli', points: 180 },
+  { id: 106, name: 'North Grid', color: '#3f7f82', leader: 'Fin', points: 140 },
+];
 
 export default function MapHome({
   onRegionTap,
@@ -155,25 +174,34 @@ export default function MapHome({
         </View>
       </View>
 
-      <MapView style={styles.map} styleURL={PARCHMENT_STYLE}>
-        <Camera centerCoordinate={center as [number, number]} zoomLevel={12} />
-        {regions.length > 0 && (
-          <ShapeSource id="regions" shape={fc} onPress={handleRegionPress}>
-            <FillLayer
-              id="regions-fill"
-              style={{ fillColor: ['get', 'fillColor'], fillOpacity: 0.3 }}
-            />
-            <LineLayer
-              id="regions-line"
-              style={{
-                lineColor: ['case', ['get', 'isMine'], palette.glowGold, palette.landEdge],
-                lineWidth: ['case', ['get', 'isMine'], 3, 1.5],
-                lineOpacity: 0.85,
-              }}
-            />
-          </ShapeSource>
-        )}
-      </MapView>
+      {Platform.OS === 'web' && !HAS_MAPBOX_TOKEN ? (
+        <PreviewTerritoryMap
+          onRegionPress={(id, name) => {
+            setCardRegion({ id, name });
+            setCardVisible(true);
+          }}
+        />
+      ) : (
+        <MapView style={styles.map} styleURL={PARCHMENT_STYLE}>
+          <Camera centerCoordinate={center as [number, number]} zoomLevel={12} />
+          {regions.length > 0 && (
+            <ShapeSource id="regions" shape={fc} onPress={handleRegionPress}>
+              <FillLayer
+                id="regions-fill"
+                style={{ fillColor: ['get', 'fillColor'], fillOpacity: 0.3 }}
+              />
+              <LineLayer
+                id="regions-line"
+                style={{
+                  lineColor: ['case', ['get', 'isMine'], palette.glowGold, palette.landEdge],
+                  lineWidth: ['case', ['get', 'isMine'], 3, 1.5],
+                  lineOpacity: 0.85,
+                }}
+              />
+            </ShapeSource>
+          )}
+        </MapView>
+      )}
 
       {loading && (
         <View style={[styles.loadingBadge, { backgroundColor: `${palette.ink}ee` }]}>
@@ -208,6 +236,42 @@ export default function MapHome({
   );
 }
 
+function PreviewTerritoryMap({
+  onRegionPress,
+}: {
+  onRegionPress: (regionId: number, regionName: string) => void;
+}) {
+  const { palette } = useTheme();
+  return (
+    <View style={[styles.previewMap, { backgroundColor: palette.parchment }]}>
+      <View style={styles.previewGrid}>
+        {PREVIEW_REGIONS.map((region, index) => (
+          <TouchableOpacity
+            key={region.id}
+            style={[
+              styles.previewRegion,
+              {
+                backgroundColor: `${region.color}66`,
+                borderColor: index === 0 ? palette.glowGold : palette.landEdge,
+                transform: [{ rotate: index % 2 === 0 ? '-2deg' : '2deg' }],
+              },
+            ]}
+            onPress={() => onRegionPress(region.id, region.name)}
+          >
+            <Text style={[styles.previewRegionName, { color: palette.ink }]}>{region.name}</Text>
+            <Text style={[styles.previewLeader, { color: palette.parchmentInk }]}>
+              {region.leader} · {region.points} pts
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <Text style={[styles.previewNote, { color: palette.parchmentMid }]}>
+        Preview map. Add Mapbox token for live map tiles.
+      </Text>
+    </View>
+  );
+}
+
 function ToggleOption({
   label,
   active,
@@ -236,6 +300,19 @@ function ToggleOption({
 const styles = StyleSheet.create({
   root: { flex: 1 },
   map: { flex: 1 },
+  previewMap: { flex: 1, padding: 18, justifyContent: 'center' },
+  previewGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, justifyContent: 'center' },
+  previewRegion: {
+    width: '44%',
+    minHeight: 130,
+    borderWidth: 2,
+    borderRadius: 18,
+    padding: 14,
+    justifyContent: 'space-between',
+  },
+  previewRegionName: { fontFamily: 'BebasNeue', fontSize: 30, letterSpacing: 1 },
+  previewLeader: { fontFamily: 'Inter-Bold', fontSize: 12 },
+  previewNote: { textAlign: 'center', marginTop: 22, fontFamily: 'Inter', fontSize: 12 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

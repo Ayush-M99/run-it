@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Platform } from 'react-native';
 import { MapView, Camera, ShapeSource, LineLayer, UserLocation } from '@rnmapbox/maps';
 import Constants from 'expo-constants';
 import { startRun, stopRun, useLiveRun, clearActiveRun, recoverActiveRun } from '../lib/location';
@@ -18,6 +18,10 @@ type RegionRow = { id: number; name: string; geom: GeoJSON.Polygon; bb: RegionBB
 const PARCHMENT_STYLE =
   (Constants.expoConfig?.extra?.mapboxParchmentStyleUrl as string | undefined) ??
   'mapbox://styles/mapbox/outdoors-v12';
+const MAPBOX_TOKEN =
+  process.env.EXPO_PUBLIC_MAPBOX_PUBLIC_TOKEN ??
+  (Constants.expoConfig?.extra?.mapboxPublicToken as string | undefined);
+const HAS_MAPBOX_TOKEN = !!MAPBOX_TOKEN && !MAPBOX_TOKEN.startsWith('PASTE_');
 
 export default function Run({ navigation }: any) {
   const { session } = useAuth();
@@ -146,23 +150,34 @@ export default function Run({ navigation }: any) {
     <View style={styles.root}>
       <Toast message={toastMsg} visible={toastVisible} onHide={() => setToastVisible(false)} />
 
-      <MapView style={styles.map} styleURL={PARCHMENT_STYLE}>
-        <Camera followUserLocation followZoomLevel={16} />
-        <UserLocation />
-        {points.length >= 2 && (
-          <ShapeSource id="run-path" shape={lineGeoJSON}>
-            <LineLayer
-              id="run-path-line"
-              style={{
-                lineColor: polylineColor,
-                lineWidth: 6,
-                lineCap: 'round',
-                lineJoin: 'round',
-              }}
-            />
-          </ShapeSource>
-        )}
-      </MapView>
+      {Platform.OS === 'web' && !HAS_MAPBOX_TOKEN ? (
+        <View style={[styles.previewRunMap, { backgroundColor: palette.parchment }]}>
+          <View style={[styles.previewRoad, { backgroundColor: palette.landEdge }]} />
+          <View style={[styles.previewRoadAlt, { backgroundColor: palette.landEdge }]} />
+          <View style={[styles.previewRoute, { borderColor: polylineColor }]} />
+          <Text style={[styles.previewRunLabel, { color: palette.parchmentMid }]}>
+            Preview route map. Add Mapbox token for live GPS map.
+          </Text>
+        </View>
+      ) : (
+        <MapView style={styles.map} styleURL={PARCHMENT_STYLE}>
+          <Camera followUserLocation followZoomLevel={16} />
+          <UserLocation />
+          {points.length >= 2 && (
+            <ShapeSource id="run-path" shape={lineGeoJSON}>
+              <LineLayer
+                id="run-path-line"
+                style={{
+                  lineColor: polylineColor,
+                  lineWidth: 6,
+                  lineCap: 'round',
+                  lineJoin: 'round',
+                }}
+              />
+            </ShapeSource>
+          )}
+        </MapView>
+      )}
 
       {/* HUD */}
       <View
@@ -229,6 +244,29 @@ function fmtTime(ms: number): string {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   map: { flex: 1 },
+  previewRunMap: { flex: 1, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  previewRoad: {
+    position: 'absolute',
+    width: '130%',
+    height: 38,
+    transform: [{ rotate: '-18deg' }],
+    opacity: 0.35,
+  },
+  previewRoadAlt: {
+    position: 'absolute',
+    width: '120%',
+    height: 24,
+    transform: [{ rotate: '24deg' }],
+    opacity: 0.25,
+  },
+  previewRoute: {
+    width: 220,
+    height: 150,
+    borderWidth: 6,
+    borderRadius: 80,
+    transform: [{ rotate: '-12deg' }],
+  },
+  previewRunLabel: { position: 'absolute', top: 120, fontFamily: 'Inter', fontSize: 12 },
   hudContainer: {
     position: 'absolute',
     left: 16,
