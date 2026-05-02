@@ -1,5 +1,12 @@
-import { useEffect } from 'react';
-import { StyleSheet, View, ActivityIndicator } from 'react-native';
+import { useEffect, useState } from 'react';
+import {
+  Platform,
+  StyleSheet,
+  View,
+  Text,
+  TouchableOpacity,
+  ActivityIndicator,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -101,6 +108,10 @@ function Gate() {
 
   if (!session) return <SignIn />;
 
+  if (Platform.OS === 'web' && session.access_token === 'preview-token') {
+    return <WebPreviewShell />;
+  }
+
   return (
     <NavigationContainer theme={navTheme}>
       <Stack.Navigator
@@ -130,6 +141,52 @@ function LeaderboardScreen({ route }: any) {
   return <Leaderboard regionId={route.params.regionId} regionName={route.params.regionName} />;
 }
 
+function WebPreviewShell() {
+  const [tab, setTab] = useState<'map' | 'run' | 'profile'>('map');
+
+  return (
+    <View style={styles.previewRoot}>
+      <View style={styles.previewNav}>
+        <Text style={styles.previewBrand}>RUN-IT</Text>
+        <View style={styles.previewTabs}>
+          <PreviewTab label="Map" active={tab === 'map'} onPress={() => setTab('map')} />
+          <PreviewTab label="Run" active={tab === 'run'} onPress={() => setTab('run')} />
+          <PreviewTab
+            label="Profile"
+            active={tab === 'profile'}
+            onPress={() => setTab('profile')}
+          />
+        </View>
+      </View>
+
+      <View style={styles.previewBody}>
+        {tab === 'map' && <MapHome onRegionTap={() => setTab('map')} />}
+        {tab === 'run' && <Run navigation={{ navigate: () => setTab('map') }} />}
+        {tab === 'profile' && <Profile />}
+      </View>
+    </View>
+  );
+}
+
+function PreviewTab({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.previewTab, active && styles.previewTabActive]}
+      onPress={onPress}
+    >
+      <Text style={[styles.previewTabText, active && styles.previewTabTextActive]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
 export default function App() {
   useEffect(() => {
     if (!MAPBOX_TOKEN || MAPBOX_TOKEN.startsWith('PASTE_')) {
@@ -153,4 +210,28 @@ export default function App() {
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  previewRoot: { flex: 1, backgroundColor: P.parchment },
+  previewNav: {
+    height: 72,
+    backgroundColor: P.ink,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 22,
+    borderBottomWidth: 2,
+    borderBottomColor: P.yellow,
+  },
+  previewBrand: { color: P.yellow, fontFamily: 'BebasNeue', fontSize: 30, letterSpacing: 4 },
+  previewTabs: { flexDirection: 'row', gap: 10 },
+  previewTab: {
+    borderWidth: 1,
+    borderColor: P.landEdge,
+    borderRadius: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+  },
+  previewTabActive: { backgroundColor: P.yellow, borderColor: P.yellow },
+  previewTabText: { color: P.cream, fontFamily: 'Inter-Bold', fontSize: 12 },
+  previewTabTextActive: { color: P.ink },
+  previewBody: { flex: 1, minHeight: 0 },
 });
