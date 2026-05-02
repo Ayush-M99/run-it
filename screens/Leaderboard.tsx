@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, ActivityIndicator } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, FlatList, StyleSheet } from 'react-native';
 import { supabase } from '../lib/supabase';
-import { userColorHex } from '../lib/colors';
 import { useAuth } from '../lib/auth';
+import { useTheme } from '../lib/ui';
+import { Surface, ScoreboardRow, CountdownBadge } from '../lib/ui/components';
 
 type Row = {
   user_id: string;
@@ -19,33 +20,48 @@ export default function Leaderboard({
   regionName: string;
 }) {
   const { session } = useAuth();
+  const { palette } = useTheme();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
-
+  const flashedRef = useRef<string | null>(null);
+  const [flashId, setFlashId] = useState<string | null>(null);
   const today = new Date().toISOString().slice(0, 10);
 
-  const load = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('region_scores')
-      .select('user_id,points,distance_m,profiles!inner(display_name)')
-      .eq('region_id', regionId)
-      .eq('date', today)
-      .order('points', { ascending: false })
-      .limit(20);
-    if (error) {
-      console.warn(error.message);
+  const load = useCallback(
+    async (updatedUserId?: string) => {
+      const { data, error } = await supabase
+        .from('region_scores')
+        .select('user_id,points,distance_m,profiles!inner(display_name)')
+        .eq('region_id', regionId)
+        .eq('date', today)
+        .order('points', { ascending: false })
+        .limit(20);
+      if (error) {
+        setLoading(false);
+        return;
+      }
+      type RawRow = {
+        user_id: string;
+        points: number;
+        distance_m: number;
+        profiles: { display_name: string };
+      };
+      const next: Row[] = ((data ?? []) as unknown as RawRow[]).map((r) => ({
+        user_id: r.user_id,
+        display_name: r.profiles?.display_name ?? 'unknown',
+        points: r.points,
+        distance_m: r.distance_m,
+      }));
+      setRows(next);
       setLoading(false);
-      return;
-    }
-    const next: Row[] = (data ?? []).map((r: any) => ({
-      user_id: r.user_id,
-      display_name: r.profiles?.display_name ?? 'unknown',
-      points: r.points,
-      distance_m: r.distance_m,
-    }));
-    setRows(next);
-    setLoading(false);
-  }, [regionId, today]);
+      if (updatedUserId) {
+        setFlashId(updatedUserId);
+        flashedRef.current = updatedUserId;
+        setTimeout(() => setFlashId(null), 700);
+      }
+    },
+    [regionId, today],
+  );
 
   useEffect(() => {
     load();
@@ -59,7 +75,7 @@ export default function Leaderboard({
           table: 'region_scores',
           filter: `region_id=eq.${regionId}`,
         },
-        () => load(),
+        (payload) => load((payload.new as any)?.user_id),
       )
       .subscribe();
     return () => {
@@ -68,58 +84,59 @@ export default function Leaderboard({
   }, [load, regionId, today]);
 
   return (
-    <View style={styles.root}>
-      <Text style={styles.title}>{regionName}</Text>
-      <Text style={styles.subtitle}>Today's leaderboard</Text>
+    <View style={[styles.root, { backgroundColor: palette.parchment }]}>
+      <View style={styles.titleBlock}>
+        <Text style={[styles.kicker, { color: palette.parchmentMid }]}>Today's leaderboard</Text>
+        <Text style={[styles.title, { color: palette.ink, fontFamily: 'BebasNeue' }]}>
+          {regionName}
+        </Text>
+      </View>
 
       {loading ? (
-        <ActivityIndicator color="#fff" style={{ marginTop: 24 }} />
+        <View style={styles.center}>
+          <Text style={[styles.loading, { color: palette.parchmentMid }]}>Loading…</Text>
+        </View>
       ) : rows.length === 0 ? (
-        <Text style={styles.empty}>No runs in this region today. Be the first.</Text>
+        <View style={styles.center}>
+          <Text style={[styles.empty, { color: palette.parchmentMid }]}>
+            No runs in this region today. Be the first.
+          </Text>
+        </View>
       ) : (
-        <FlatList
-          data={rows}
-          keyExtractor={(r) => r.user_id}
-          renderItem={({ item, index }) => {
-            const isMe = !!session && item.user_id === session.user.id;
-            return (
-              <View style={[styles.row, isMe && styles.rowMe]}>
-                <Text style={styles.rank}>{index + 1}</Text>
-                <View style={[styles.dot, { backgroundColor: userColorHex(item.user_id) }]} />
-                <Text style={styles.name}>
-                  {item.display_name}
-                  {isMe ? ' (you)' : ''}
-                </Text>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={styles.points}>{item.points} pts</Text>
-                  <Text style={styles.distance}>{(item.distance_m / 1000).toFixed(2)} km</Text>
-                </View>
-              </View>
-            );
-          }}
-        />
+        <Surface style={{ marginHorizontal: 16, marginBottom: 16, overflow: 'hidden' }}>
+          <FlatList
+            data={rows}
+            keyExtractor={(r) => r.user_id}
+            scrollEnabled={false}
+            renderItem={({ item, index }) => (
+              <ScoreboardRow
+                rank={index + 1}
+                userId={item.user_id}
+                displayName={item.display_name}
+                points={item.points}
+                distanceM={item.distance_m}
+                isMe={!!session && item.user_id === session.user.id}
+                flash={flashId === item.user_id}
+              />
+            )}
+          />
+        </Surface>
       )}
+
+      <View style={styles.countdown}>
+        <CountdownBadge />
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0b1a2b', padding: 20 },
-  title: { color: '#fff', fontSize: 24, fontWeight: '700' },
-  subtitle: { color: '#7790aa', fontSize: 13, marginTop: 2, marginBottom: 16 },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    gap: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#16263a',
-  },
-  rowMe: { backgroundColor: 'rgba(58,160,255,0.1)' },
-  rank: { color: '#7790aa', width: 24, fontSize: 14, fontWeight: '600' },
-  dot: { width: 12, height: 12, borderRadius: 6 },
-  name: { color: '#fff', flex: 1, fontSize: 15 },
-  points: { color: '#3aa0ff', fontSize: 15, fontWeight: '600' },
-  distance: { color: '#7790aa', fontSize: 11 },
-  empty: { color: '#7790aa', textAlign: 'center', marginTop: 32 },
+  root: { flex: 1 },
+  titleBlock: { padding: 20, paddingBottom: 12 },
+  kicker: { fontSize: 10, fontFamily: 'Inter', textTransform: 'uppercase', letterSpacing: 1.5 },
+  title: { fontSize: 36, letterSpacing: 1, marginTop: 2 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  loading: { fontFamily: 'Inter', fontSize: 14 },
+  empty: { fontFamily: 'Inter', fontSize: 14, textAlign: 'center', lineHeight: 22 },
+  countdown: { padding: 20, alignItems: 'center' },
 });

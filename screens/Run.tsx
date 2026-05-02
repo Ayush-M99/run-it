@@ -1,35 +1,49 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Alert,
-  ActivityIndicator,
-  Modal,
-} from 'react-native';
-import Mapbox, { MapView, Camera, ShapeSource, LineLayer, UserLocation } from '@rnmapbox/maps';
+import { View, Text, StyleSheet } from 'react-native';
+import { MapView, Camera, ShapeSource, LineLayer, UserLocation } from '@rnmapbox/maps';
+import Constants from 'expo-constants';
 import { startRun, stopRun, useLiveRun, clearActiveRun, recoverActiveRun } from '../lib/location';
 import { uploadRun } from '../lib/runs';
 import { useAuth } from '../lib/auth';
 import { pathDistanceMeters } from '../lib/distance';
+import { userColorHex } from '../lib/colors';
+import { useTheme } from '../lib/ui';
+import { PrimaryButton, BebasNumber, CoinRow, Toast } from '../lib/ui/components';
+import { pointInPolygon, bbox } from '../lib/geo';
+import { supabase } from '../lib/supabase';
 
-type RunSummary = {
-  distanceM: number;
-  durationMs: number;
-  points: number;
-  pointCount: number;
-  status: string;
-};
+type RegionBBox = { minX: number; minY: number; maxX: number; maxY: number };
+type RegionRow = { id: number; name: string; geom: GeoJSON.Polygon; bb: RegionBBox };
+
+const PARCHMENT_STYLE =
+  (Constants.expoConfig?.extra?.mapboxParchmentStyleUrl as string | undefined) ??
+  'mapbox://styles/mapbox/outdoors-v12';
 
 export default function Run({ navigation }: any) {
   const { session } = useAuth();
+  const { palette } = useTheme();
   const [active, setActive] = useState(false);
   const [busy, setBusy] = useState(false);
   const [, setTick] = useState(0);
-  const [summary, setSummary] = useState<RunSummary | null>(null);
   const startedRef = useRef<number | null>(null);
   const points = useLiveRun(active);
+  const visitedRegions = useRef<Set<number>>(new Set());
+  const [toastMsg, setToastMsg] = useState('');
+  const [toastVisible, setToastVisible] = useState(false);
+  const [regions, setRegions] = useState<RegionRow[]>([]);
+
+  // load regions for PIP check
+  useEffect(() => {
+    supabase.rpc('regions_as_geojson').then(({ data }) => {
+      if (!data) return;
+      setRegions(
+        (data as Array<{ id: number; name: string; geojson: string }>).map((r) => {
+          const geom = JSON.parse(r.geojson) as GeoJSON.Polygon;
+          return { id: r.id, name: r.name, geom, bb: bbox(geom) };
+        }),
+      );
+    });
+  }, []);
 
   useEffect(() => {
     recoverActiveRun().then((r) => {
@@ -46,6 +60,28 @@ export default function Run({ navigation }: any) {
     return () => clearInterval(id);
   }, [active]);
 
+  // check region entry on each new point
+  useEffect(() => {
+    if (!active || points.length === 0) return;
+    const last = points[points.length - 1];
+    for (const r of regions) {
+      if (visitedRegions.current.has(r.id)) continue;
+      // bbox pre-filter: skip ray-cast if point is outside the bounding box
+      if (
+        last.lng < r.bb.minX ||
+        last.lng > r.bb.maxX ||
+        last.lat < r.bb.minY ||
+        last.lat > r.bb.maxY
+      )
+        continue;
+      if (pointInPolygon(last.lng, last.lat, r.geom)) {
+        visitedRegions.current.add(r.id);
+        setToastMsg(`Entered ${r.name}!`);
+        setToastVisible(true);
+      }
+    }
+  }, [points, active, regions]);
+
   const distance = pathDistanceMeters(points.map((p) => ({ latitude: p.lat, longitude: p.lng })));
   const elapsedMs = active && startedRef.current ? Date.now() - startedRef.current : 0;
 
@@ -57,10 +93,12 @@ export default function Run({ navigation }: any) {
 
   async function onStart() {
     setBusy(true);
+    visitedRegions.current = new Set();
     const r = await startRun();
     setBusy(false);
     if (!r.ok) {
-      Alert.alert('Cannot start run', r.reason ?? 'Permission denied');
+      setToastMsg(r.reason ?? 'Permission denied');
+      setToastVisible(true);
       return;
     }
     startedRef.current = Date.now();
@@ -72,15 +110,11 @@ export default function Run({ navigation }: any) {
     setBusy(true);
     const r = await stopRun();
     setActive(false);
-    if (!r) {
-      setBusy(false);
-      await clearActiveRun();
-      return;
-    }
-    if (r.points.length < 2) {
-      Alert.alert('Run too short', 'No GPS points were recorded.');
+    if (!r || r.points.length < 2) {
       await clearActiveRun();
       setBusy(false);
+      setToastMsg('Run too short — no GPS points recorded.');
+      setToastVisible(true);
       return;
     }
     const upload = await uploadRun({
@@ -90,113 +124,95 @@ export default function Run({ navigation }: any) {
       points: r.points,
     });
     setBusy(false);
+    await clearActiveRun();
     if ('error' in upload) {
-      Alert.alert('Upload failed', upload.error);
+      setToastMsg('Upload failed: ' + upload.error);
+      setToastVisible(true);
       return;
     }
-    await clearActiveRun();
-    setSummary({
+    navigation?.navigate?.('RunSummary', {
       distanceM: upload.distanceM,
       durationMs: r.endedAt - r.startedAt,
       points: Math.floor(upload.distanceM / 10),
       pointCount: r.points.length,
-      status: 'Saved and scored',
+      coords: r.points.map((p) => [p.lng, p.lat] as [number, number]),
+      userId: session.user.id,
     });
   }
 
+  const polylineColor = session ? userColorHex(session.user.id) : palette.blue;
+
   return (
     <View style={styles.root}>
-      <MapView style={styles.map} styleURL={Mapbox.StyleURL.Dark}>
+      <Toast message={toastMsg} visible={toastVisible} onHide={() => setToastVisible(false)} />
+
+      <MapView style={styles.map} styleURL={PARCHMENT_STYLE}>
         <Camera followUserLocation followZoomLevel={16} />
         <UserLocation />
         {points.length >= 2 && (
           <ShapeSource id="run-path" shape={lineGeoJSON}>
             <LineLayer
               id="run-path-line"
-              style={{ lineColor: '#3aa0ff', lineWidth: 5, lineCap: 'round', lineJoin: 'round' }}
+              style={{
+                lineColor: polylineColor,
+                lineWidth: 6,
+                lineCap: 'round',
+                lineJoin: 'round',
+              }}
             />
           </ShapeSource>
         )}
       </MapView>
 
-      <View style={styles.hud}>
-        <View style={styles.statRow}>
-          <View style={styles.stat}>
-            <Text style={styles.statLabel}>Distance</Text>
-            <Text style={styles.statValue}>{(distance / 1000).toFixed(2)} km</Text>
-          </View>
-          <View style={styles.stat}>
-            <Text style={styles.statLabel}>Time</Text>
-            <Text style={styles.statValue}>{fmtTime(elapsedMs)}</Text>
-          </View>
-          <View style={styles.stat}>
-            <Text style={styles.statLabel}>Points</Text>
-            <Text style={styles.statValue}>{Math.floor(distance / 10)}</Text>
-          </View>
-        </View>
-        <TouchableOpacity
-          style={[styles.btn, active ? styles.btnStop : styles.btnStart]}
-          onPress={active ? onStop : onStart}
-          disabled={busy}
-        >
-          {busy ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.btnText}>{active ? 'Stop run' : 'Start run'}</Text>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      <Modal
-        visible={!!summary}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setSummary(null)}
+      {/* HUD */}
+      <View
+        style={[
+          styles.hudContainer,
+          { backgroundColor: palette.cream, borderColor: palette.landEdge },
+        ]}
       >
-        <View style={styles.modalScrim}>
-          <View style={styles.summaryCard}>
-            <Text style={styles.summaryKicker}>Run complete</Text>
-            <Text style={styles.summaryTitle}>{summary?.status}</Text>
-
-            <View style={styles.summaryGrid}>
-              <SummaryStat
-                label="Distance"
-                value={`${((summary?.distanceM ?? 0) / 1000).toFixed(2)} km`}
-              />
-              <SummaryStat label="Points" value={String(summary?.points ?? 0)} />
-              <SummaryStat label="Time" value={fmtTime(summary?.durationMs ?? 0)} />
-              <SummaryStat label="GPS points" value={String(summary?.pointCount ?? 0)} />
-            </View>
-
-            <View style={styles.summaryActions}>
-              <TouchableOpacity
-                style={[styles.summaryBtn, styles.summaryBtnSecondary]}
-                onPress={() => setSummary(null)}
-              >
-                <Text style={styles.summaryBtnSecondaryText}>Dismiss</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.summaryBtn, styles.summaryBtnPrimary]}
-                onPress={() => {
-                  setSummary(null);
-                  navigation?.navigate?.('Map');
-                }}
-              >
-                <Text style={styles.summaryBtnPrimaryText}>View map</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+        <View style={styles.statRow}>
+          <HudStat label="Distance" value={`${(distance / 1000).toFixed(2)}`} suffix=" KM" />
+          <View style={[styles.divider, { backgroundColor: palette.landEdge }]} />
+          <HudStat label="Time" value={fmtTime(elapsedMs)} />
+          <View style={[styles.divider, { backgroundColor: palette.landEdge }]} />
+          <HudStat label="Points" value={`${Math.floor(distance / 10)}`} />
         </View>
-      </Modal>
+
+        {active && (
+          <CoinRow
+            points={Math.floor(distance / 10)}
+            style={{ alignSelf: 'center', marginBottom: 8 }}
+          />
+        )}
+
+        <PrimaryButton
+          label={active ? 'Stop Run' : 'Start Run'}
+          onPress={active ? onStop : onStart}
+          loading={busy}
+          danger={active}
+        />
+      </View>
     </View>
   );
 }
 
-function SummaryStat({ label, value }: { label: string; value: string }) {
+function HudStat({ label, value, suffix = '' }: { label: string; value: string; suffix?: string }) {
+  const { palette } = useTheme();
   return (
-    <View style={styles.summaryStat}>
-      <Text style={styles.summaryStatValue}>{value}</Text>
-      <Text style={styles.summaryStatLabel}>{label}</Text>
+    <View style={styles.stat}>
+      <BebasNumber value={value} suffix={suffix} size="badge" style={{ color: palette.ink }} />
+      <Text
+        style={{
+          color: palette.parchmentMid,
+          fontSize: 10,
+          fontFamily: 'Inter',
+          letterSpacing: 1,
+          textTransform: 'uppercase',
+        }}
+      >
+        {label}
+      </Text>
     </View>
   );
 }
@@ -211,54 +227,28 @@ function fmtTime(ms: number): string {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0b1a2b' },
+  root: { flex: 1 },
   map: { flex: 1 },
-  hud: {
+  hudContainer: {
     position: 'absolute',
     left: 16,
     right: 16,
     bottom: 32,
-    backgroundColor: 'rgba(11,26,43,0.92)',
-    borderRadius: 16,
+    borderRadius: 20,
+    borderWidth: 1.5,
     padding: 16,
+    shadowColor: '#1A1A2E',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+    elevation: 12,
   },
-  statRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 12 },
-  stat: { alignItems: 'center' },
-  statLabel: { color: '#7790aa', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 },
-  statValue: { color: '#fff', fontSize: 22, fontWeight: '600', marginTop: 2 },
-  btn: { borderRadius: 10, padding: 14, alignItems: 'center' },
-  btnStart: { backgroundColor: '#3aa0ff' },
-  btnStop: { backgroundColor: '#ff5c5c' },
-  btnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  modalScrim: {
-    flex: 1,
-    backgroundColor: 'rgba(3,9,18,0.68)',
-    justifyContent: 'center',
-    padding: 20,
+  statRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    marginBottom: 12,
   },
-  summaryCard: {
-    backgroundColor: '#0b1a2b',
-    borderRadius: 12,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#243a54',
-  },
-  summaryKicker: { color: '#7790aa', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 },
-  summaryTitle: { color: '#fff', fontSize: 26, fontWeight: '700', marginTop: 4, marginBottom: 18 },
-  summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  summaryStat: { width: '48%', backgroundColor: '#16263a', borderRadius: 8, padding: 12 },
-  summaryStatValue: { color: '#fff', fontSize: 20, fontWeight: '700' },
-  summaryStatLabel: {
-    color: '#7790aa',
-    fontSize: 11,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginTop: 4,
-  },
-  summaryActions: { flexDirection: 'row', gap: 10, marginTop: 18 },
-  summaryBtn: { flex: 1, borderRadius: 10, padding: 14, alignItems: 'center' },
-  summaryBtnPrimary: { backgroundColor: '#3aa0ff' },
-  summaryBtnSecondary: { backgroundColor: '#16263a' },
-  summaryBtnPrimaryText: { color: '#fff', fontWeight: '700' },
-  summaryBtnSecondaryText: { color: '#c6d3e1', fontWeight: '700' },
+  stat: { alignItems: 'center', flex: 1 },
+  divider: { width: 1, height: 36 },
 });

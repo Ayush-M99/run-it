@@ -3,12 +3,15 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
 
 const globals = {
+  __DEV__: 'readonly',
   console: 'readonly',
   clearInterval: 'readonly',
   fetch: 'readonly',
   FormData: 'readonly',
   GeoJSON: 'readonly',
+  module: 'readonly',
   process: 'readonly',
+  require: 'readonly',
   setInterval: 'readonly',
   setTimeout: 'readonly',
 };
@@ -27,6 +30,12 @@ export default tseslint.config(
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    files: ['**/*.js'],
+    languageOptions: {
+      globals,
+    },
+  },
   {
     files: ['**/*.{ts,tsx}'],
     languageOptions: {

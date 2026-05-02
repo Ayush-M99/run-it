@@ -1,337 +1,358 @@
-# Run-It MVP — Territory-Based Running Game
+# Run-It → "Jet Lag" UI Redesign
 
 ## Context
 
-Solo developer building a resume-grade MVP in 5–10 days. The app gamifies real-world running: a city is divided into polygon regions, GPS distance covered inside a region converts to points, daily leaderboards crown one winner per region. Goal is **end-to-end working demo**, not production scale. Optimize for speed, clarity, and a strong "system design + geospatial + mobile" interview narrative.
+Run-It MVP is functionally complete: Expo dev-build, Supabase + PostGIS backend, Mapbox map, BG GPS, leaderboards, daily winner snapshots — all wired and demoable. The current UI is a generic Strava-style dark theme (`#0b1a2b` / `#3aa0ff`) that doesn't match the user's vision: **playful yet premium, board-game tactility, like the maps and scoreboards in _Jet Lag: The Game_**.
 
-**Confirmed decisions (from clarifying Q&A):**
-
-| Decision      | Choice                                | Rationale                                                                                                                     |
-| ------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| GPS mode      | **Background tracking required**      | Real running with screen-off. Costs ~1 day (EAS dev build), but it's the honest experience and the strongest interview story. |
-| Backend       | **Supabase (Postgres + PostGIS)**     | Server-side point-in-polygon and line-clipping in SQL. Real geospatial story for interviews.                                  |
-| Region source | **Real OSM neighborhood polygons**    | Authentic data via Overpass API. ~1–2 hrs prep.                                                                               |
-| Auth          | **Email + password**                  | Native Supabase Auth, zero extra config.                                                                                      |
-| Map lib       | **`@rnmapbox/maps`**                  | Custom styling looks better in demo video. Requires free Mapbox token + Expo config plugin.                                   |
-| Ownership     | **Daily winner + persistent history** | `daily_region_winners` table; map shows yesterday's winner. Enables stats screens.                                            |
-| Demo data     | **Seed script with 5–10 fake users**  | Leaderboards look populated in the demo video.                                                                                |
-| Demo city     | **`{{CITY}}` — fill in day 1**        | Pick your home city or default to Lower Manhattan if you want a recognizable stand-in.                                        |
+This plan covers a UI-only redesign. **Stack stays React Native + Expo** — the GPS pipeline, Supabase RPCs, realtime channels, and Mapbox integration are reused unchanged. Framing shifts to a **territory board game**: map = the board, regions = tiles you claim, glowing player tokens for rivals, animated route playback after each run, parchment land tones with bold display type. Timeline: **2–3 weeks of full polish**, including animated route draw, custom Mapbox parchment style, and share-card export from the post-run summary.
 
 ---
 
-## Refined MVP Definition
+## Locked decisions
 
-A React Native (Expo dev-build) mobile app where an authenticated user starts a run, the app records GPS in the background, computes the path's total distance and the distance traversed inside each predefined neighborhood polygon, awards points (1 point per 10 m), and updates that region's daily leaderboard. The home screen shows a Mapbox map of the city colored by yesterday's winning user per region. At local midnight a scheduled job snapshots that day's winners into history.
-
-**Out of scope (don't build, don't even prototype):** smartwatch sync, complex anti-cheat, multiplayer battles, notifications, social features, payments, web app.
+| Question          | Answer                                                                         |
+| ----------------- | ------------------------------------------------------------------------------ |
+| Framework         | React Native + Expo (no Flutter rewrite)                                       |
+| Framing           | Territory board game                                                           |
+| Surfaces in scope | MapHome, Run, Leaderboard, **new** RunSummary; Profile = chrome/font swap only |
+| Timeline          | 2–3 weeks, full polish                                                         |
+| Animation lib     | `react-native-reanimated` v4 + `react-native-svg`                              |
+| Maps              | Custom Mapbox Studio parchment style (URL-referenced, not local JSON)          |
+| Fonts             | Bebas Neue (display) + Inter (body) via `expo-font`                            |
+| State             | Plain hooks + Supabase client — no new state library                           |
+| Backend           | Untouched — no schema/RPC changes                                              |
 
 ---
 
-## System Design
-
-### High-level architecture
+## Theme system — `lib/ui/`
 
 ```
-[Expo dev-build app]                         [Supabase]
-  - expo-location (BG TaskManager)            - auth (email/password)
-  - @rnmapbox/maps                            - postgres + postgis
-  - AsyncStorage (crash buffer)               - rpc: process_run(run_id)
-  - @turf/* (client distance only)            - realtime channels (leaderboards)
-         │                                    - pg_cron (daily winner snapshot)
-         │  https + supabase-js                       │
-         └──────────────────────────────────────────► │
-                                              regions │ runs │ run_points │
-                                              region_scores │ daily_region_winners │ profiles
+d:\run_it\lib\ui\
+  tokens.ts          palette, space, radii, shadows, z-index
+  typography.ts      font families + type scale (hero / title / badge / body / caption)
+  fonts.ts           useAppFonts() — expo-font hook
+  theme.ts           composes tokens + typography
+  ThemeProvider.tsx  context + useTheme() hook
+  index.ts           barrel export
+  components/        primitives (see below)
 ```
 
-### Data flow — one run end-to-end
+**Palette** (from the user's reference HTML):
 
-1. User taps **Start Run** → `expo-location.startLocationUpdatesAsync` registers a background task.
-2. Each location callback: filter (accuracy ≤ 50 m, speed ≤ 20 km/h, time delta ≥ 1 s); append to in-memory buffer + mirror to AsyncStorage (crash safety).
-3. UI subscribes to the same buffer and renders the live polyline on the map.
-4. User taps **Stop Run** → app `INSERT`s one row into `runs` + bulk `INSERT` into `run_points`, then calls RPC `process_run(run_id)`.
-5. `process_run` (Postgres function) builds a `LINESTRING` from the points, uses `ST_Intersection` against each region polygon, sums per-region length, converts to points, upserts `region_scores` for `date = today`.
-6. Leaderboard screen subscribes via Supabase realtime to `region_scores` filtered by `region_id` + today.
-7. At local midnight a `pg_cron` job inserts the top user per region into `daily_region_winners`.
-8. Map home screen reads `daily_region_winners` for `date = yesterday` and colors each polygon by winner.
-
-### Data model (final, minimal)
-
-```sql
--- Built-in: auth.users (Supabase)
-
-create table profiles (
-  user_id uuid primary key references auth.users on delete cascade,
-  display_name text not null,
-  created_at timestamptz default now()
-);
-
-create table regions (
-  id serial primary key,
-  name text not null,
-  geom geometry(Polygon, 4326) not null
-);
-create index regions_geom_idx on regions using gist (geom);
-
-create table runs (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users,
-  started_at timestamptz not null,
-  ended_at timestamptz not null,
-  distance_m numeric not null,
-  processed_at timestamptz
-);
-
-create table run_points (
-  run_id uuid references runs on delete cascade,
-  ts timestamptz not null,
-  geom geometry(Point, 4326) not null,
-  primary key (run_id, ts)
-);
-
-create table region_scores (
-  region_id int references regions,
-  user_id uuid references auth.users,
-  date date not null,
-  distance_m numeric not null default 0,
-  points int not null default 0,
-  primary key (region_id, user_id, date)
-);
-create index region_scores_lookup on region_scores (region_id, date, points desc);
-
-create table daily_region_winners (
-  region_id int references regions,
-  date date not null,
-  user_id uuid references auth.users,
-  points int not null,
-  primary key (region_id, date)
-);
+```
+cream     #F5F0E8   landFill #E8E0D0   blue   #2D6BE4
+ink       #1A1A2E   landEdge #C8BEA8   red    #E84040
+parchment #F5F0E8   water    #A8D8EA   yellow #F5C842
+glowGold  #FFD84A                      green  #3CB371
 ```
 
-RLS: `regions` public read; `runs` / `run_points` insert+select only for `auth.uid() = user_id`; `region_scores` / `daily_region_winners` / `profiles` public read, service-role write.
+Rationale for `lib/ui/` not `components/`: matches existing convention (`lib/auth.tsx`, `lib/supabase.ts`, `lib/colors.ts`).
 
-### Key components (React Native side)
+### Wiring without "big bang" rewrite
 
-| Module                | Purpose                                                                                     |
-| --------------------- | ------------------------------------------------------------------------------------------- |
-| `lib/supabase.ts`     | Single client init                                                                          |
-| `lib/location.ts`     | Background TaskManager registration + buffer + filters                                      |
-| `lib/distance.ts`     | Haversine helpers (used only for live UI distance; canonical distance computed server-side) |
-| `screens/MapHome`     | Mapbox map, regions colored by yesterday's winner                                           |
-| `screens/Run`         | Start/Stop, live distance + duration, live polyline                                         |
-| `screens/Leaderboard` | Tap a region → see today's top users (realtime)                                             |
-| `screens/Profile`     | Total runs, total distance, regions you've ever won                                         |
+Modify only [App.tsx](App.tsx):
 
----
+1. Wrap `<AuthProvider>` with `<ThemeProvider>`.
+2. Block render until `useAppFonts()` resolves (reuse the auth-gate `ActivityIndicator`).
+3. Replace inline `navTheme` ([App.tsx:35-46](App.tsx#L35-L46)) with one derived from `tokens.palette` — single change re-themes React Navigation header + tab bar globally.
 
-## Execution Plan (8 days + 2 buffer)
+Each screen migrates one at a time: replace hardcoded `#0b1a2b` / `#3aa0ff` with theme reads. Until migrated, a screen looks dark-on-cream — ugly but functional.
 
-> Each day must end with the listed deliverable demo-able. If a day slips, **cut polish** before cutting features 1–6.
+### Reuse existing helpers
 
-### Day 1 — Foundations & "hello map"
-
-- `npx create-expo-app run-it --template`; `eas init`; configure EAS dev build profile.
-- Create Supabase project; save URL + anon key to `.env`.
-- Create Mapbox account; install `@rnmapbox/maps`; add Expo config plugin with token.
-- Build first dev-build (`eas build --profile development --platform android`); install on physical phone.
-- Verify Mapbox map renders centered on `{{CITY}}`.
-- **Deliverable:** App runs on phone, shows Mapbox map of your city.
-
-### Day 2 — Region data prep
-
-- Pick `{{CITY}}` (or a district if huge). Use Overpass API (`overpass-turbo.eu`) with a query like:
-  ```
-  [out:json][timeout:25];
-  area["name"="{{CITY}}"]->.a;
-  relation["boundary"="administrative"]["admin_level"~"^(8|9|10)$"](area.a);
-  out geom;
-  ```
-- Export GeoJSON; clean to ~10–25 polygons (too many = noisy demo).
-- Write a one-shot Node script that loads each Feature into the `regions` table via `ST_GeomFromGeoJSON`.
-- Render regions as Mapbox `FillLayer` on the home screen.
-- **Deliverable:** Map shows real city neighborhoods as translucent polygons.
-
-### Day 3 — Auth + foreground GPS + run UI
-
-- Supabase email/password auth (sign up, sign in, sign out, profile-row trigger on signup).
-- `expo-location` foreground tracking working; live polyline on the Run screen.
-- Start/Stop buttons; basic timer + live distance (Haversine on client, just for UI).
-- **Deliverable:** You can sign in, tap start, walk around, see your blue path drawn live.
-
-### Day 4 — Background tracking + persistence
-
-- Register `TaskManager` background location task; `Location.startLocationUpdatesAsync` with `foregroundService` notification on Android, `Always` permission flow on iOS.
-- AsyncStorage buffer flushes on every batch so a crash doesn't lose a run.
-- On Stop: bulk insert into `runs` + `run_points` (chunk to ≤ 500 rows per insert).
-- Anti-cheat filter (drop points with `accuracy > 50` or instantaneous speed > 20 km/h).
-- **Deliverable:** Lock the phone, run for 5 min, unlock — full path is recorded and saved.
-
-### Day 5 — Server-side region attribution (the geospatial money shot)
-
-- Write the `process_run(run_uuid uuid)` Postgres function. Core query:
-  ```sql
-  with line as (
-    select st_makeline(geom order by ts) as geom
-    from run_points where run_id = run_uuid
-  ),
-  segments as (
-    select r.id as region_id,
-           st_length(
-             st_intersection(line.geom, r.geom)::geography
-           ) as dist_m
-    from regions r, line
-    where st_intersects(line.geom, r.geom)
-  )
-  insert into region_scores (region_id, user_id, date, distance_m, points)
-  select region_id, $user_id, current_date, dist_m, floor(dist_m / 10)::int
-  from segments where dist_m > 0
-  on conflict (region_id, user_id, date)
-  do update set distance_m = region_scores.distance_m + excluded.distance_m,
-                points     = region_scores.points     + excluded.points;
-  ```
-- App calls `supabase.rpc('process_run', { run_uuid })` after Stop.
-- **Deliverable:** After a run that crosses 2 regions, both rows appear in `region_scores` with realistic distances.
-
-### Day 6 — Leaderboards + profile
-
-- Leaderboard screen: tap region on map → bottom sheet with top 10 users today (`region_scores` join `profiles`).
-- Wire Supabase Realtime channel on `region_scores` filtered by region+date so the board updates live.
-- Profile screen: total distance, total runs, lifetime regions won (count from `daily_region_winners`).
-- **Deliverable:** Two test accounts, two runs, leaderboard ranks correctly and updates live.
-
-### Day 7 — Daily winner snapshot + ownership UI
-
-- Try `pg_cron` first: `select cron.schedule('snapshot-winners', '0 0 * * *', $$ ... $$)`. The job inserts top scorer per region for `current_date - 1` into `daily_region_winners`.
-- Fallback if pg_cron not enabled on your Supabase plan: a Supabase Edge Function on a daily schedule, or compute "current leader" on-read with a view (acceptable shortcut).
-- Map home: color each region by `daily_region_winners` row for yesterday; stable per-user color (hash user_id → HSL).
-- "Owned by you" highlight on regions you've won.
-- **Deliverable:** Map looks like a territory game — colored patches with owner badges.
-
-### Day 8 — Seed data, polish, demo video, README
-
-- Seed script: 8 fake `auth.users` + profiles + 30 synthetic runs (random LineStrings inside random regions, distributed across the last 7 days). Run `process_run` for each.
-- README with: demo GIF, architecture diagram, schema, "what I'd build next" section.
-- Record 60–90 sec demo video: sign in → run a short loop → see it appear on leaderboard → see colored map.
-- **Deliverable:** Pushable repo + video link ready to drop on resume.
-
-### Days 9–10 — Buffer
-
-Reserved for: iOS background-location permission gotchas, EAS build queue waits, any one feature that slipped. **Do not add scope here.**
+- [lib/colors.ts](lib/colors.ts) `userColorHex(uid)` — keep as-is (load-bearing for Mapbox data-driven styling). Add sibling `userColorWithGlow(uid)` returning `{ base, glow }` for `PlayerToken`.
+- [lib/geo.ts](lib/geo.ts) `pointInPolygon` — reused for the new region-entered toast on Run.
 
 ---
 
-## Technical Decisions (justified)
+## Custom Mapbox style — Studio, not local JSON
 
-- **Expo dev-build (not bare RN, not Expo Go).** Background location needs native config, but bare RN throws away Expo's tooling. Dev-build is the sweet spot.
-- **Supabase over Firebase.** PostGIS does the geometry math in one SQL query; the same logic in Firestore needs client-side Turf.js per run, which is slower, drains battery, and tells a weaker interview story.
-- **Server-authoritative scoring.** Client only computes UI-distance; canonical distance and per-region attribution run in `process_run`. Prevents trivial cheating via tampered client and is "the right thing" architecturally.
-- **`@rnmapbox/maps` over `react-native-maps`.** Pretty styles for video; vector tiles handle hundreds of polygons cheaply. Cost: 30 min extra config on day 1.
-- **No realtime location streaming to backend.** Points are batched on Stop. Realtime per-point streaming costs battery, costs DB writes, adds nothing to the demo.
-- **Points = `floor(distance_m / 10)`.** Round number, easy to explain, gives a 5 km run = 500 points.
-- **Anti-cheat = two filters and done.** Drop bad-accuracy points, drop teleports. Anything more is out of scope per the brief.
-- **Skipping** Redux / Zustand / React Query — Supabase client + a few `useState` hooks are enough at this scale. Adding state libraries is overengineering for an 8-day MVP.
+Build a parchment style in **Mapbox Studio** (duplicate "Outdoors", recolor land=`#E8E0D0`, water=`#A8D8EA`, roads=thin `#C8BEA8`, hide POI, low-contrast brown labels). Publish, paste URL into `app.json` → `extra.mapboxParchmentStyleUrl`, read it in [App.tsx](App.tsx) alongside the existing token bootstrap, and replace `Mapbox.StyleURL.Dark` in [screens/MapHome.tsx:124](screens/MapHome.tsx#L124) and [screens/Run.tsx:109](screens/Run.tsx#L109).
+
+Local `style.json` rejected: requires self-hosting tiles/glyphs/sprites — two days of yak-shaving against a 14-day budget.
+
+**Region styling tweaks** (against parchment): drop `FillLayer` opacity from 0.45 → 0.30, bump `LineLayer` opacity to 0.85, keep `isMine` gold border (rename `#ffd84a` → `palette.glowGold`).
 
 ---
 
-## Implementation Guidance — the tricky parts
+## Reusable primitives — `lib/ui/components/`
 
-### Background location on Android
+| File                  | Purpose                                                                                                                      |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `Surface.tsx`         | Parchment card: double-border (outer landEdge / inner landFill 1px inset), soft shadow, optional `tilt` for board-stack feel |
+| `PlayerToken.tsx`     | Circle in `userColorHex(uid)` + animated glow ring (Reanimated `withRepeat` 1500ms scale 1→1.6) — **the signature element**  |
+| `CoinRow.tsx`         | Horizontal coin chips with stagger pop-in (`withDelay(i*80, withSpring)`)                                                    |
+| `ChallengeCard.tsx`   | Slide-up card popup (replaces immediate-navigate on MapHome region tap)                                                      |
+| `CountdownBadge.tsx`  | Pill with monospaced digits (Leaderboard "resets in 04:12:08")                                                               |
+| `BebasNumber.tsx`     | Big display number with optional 0→value count-up via `useAnimatedReaction`                                                  |
+| `ScoreboardRow.tsx`   | Leaderboard row: rank chip + token + name + points + km                                                                      |
+| `PrimaryButton.tsx`   | Ink-on-yellow chunky board-game button                                                                                       |
+| `SecondaryButton.tsx` | Outlined parchment button                                                                                                    |
+| `Toast.tsx`           | Top slide-down ("Region claimed! +120")                                                                                      |
 
-- Set `expo-location` plugin in `app.json` with `locationAlwaysAndWhenInUsePermission`, `isAndroidBackgroundLocationEnabled: true`, `isAndroidForegroundServiceEnabled: true`.
-- The foreground service notification ("Run-It is tracking your run") is **mandatory** — Android kills tasks without it.
+All consume `useTheme()`, never hardcode hex. Each accepts `size?: 'sm' | 'md' | 'lg'` where it makes sense.
 
-### Background location on iOS
+Build a `screens/_DesignSystem.tsx` (gated `__DEV__`) that renders every primitive on one scrollable page for visual QA.
 
-- Info.plist needs `NSLocationAlwaysAndWhenInUseUsageDescription` and the `UIBackgroundModes: location` key (set via Expo plugin).
-- iOS will only grant `Always` after the user grants `WhenInUse` first and then re-prompts. Build the permission flow as two steps.
+---
 
-### AsyncStorage crash buffer pattern
+## Per-screen redesign
+
+### MapHome — [screens/MapHome.tsx](screens/MapHome.tsx)
+
+**Data hooks kept verbatim:** `regions_as_geojson` RPC, `daily_region_winners` query, `current_region_leaders` RPC, realtime `region_scores` channel, `fc` FeatureCollection construction.
+
+**Layout:**
+
+```
++-----------------------------------------------+
+| [Today | Yesterday]   CITY NAME (Bebas)  [⚙] |
++-----------------------------------------------+
+|                                               |
+|         <Mapbox parchment basemap>            |
+|         regions filled in player hues         |
+|         your-owned regions: gold deckle edge  |
+|                                               |
+|   +---- ChallengeCard (on tap) -------------+ |
+|   | [Token] Greenwich Village                | |
+|   | "Held by @sam · 1240 pts · 4.2 km"       | |
+|   | [Open leaderboard]  [Plan a run]         | |
+|   +-----------------------------------------+ |
++-----------------------------------------------+
+```
+
+**Changes:**
+
+- Parchment basemap, lower fill opacity, gold deckle border for owned regions.
+- Header strip with **Today / Yesterday segmented control** — toggles between `todayLeaders` and `yesterdayWinners` (both already in state). No new fetch.
+- **ChallengeCard popup replaces immediate navigate** on region tap. Primary action calls existing `onRegionTap` callback.
+- On-map `PlayerToken` overlays at region centroids — **deferred** (first item to drop if time slips).
+
+### Run — [screens/Run.tsx](screens/Run.tsx)
+
+**Hooks kept:** `useLiveRun`, `startRun`, `stopRun`, `recoverActiveRun`, `uploadRun`, `pathDistanceMeters`, elapsed `setInterval`, MapView + UserLocation + polyline.
+
+**Removed:** the in-screen `<Modal>` summary block ([Run.tsx:150-190](screens/Run.tsx#L150-L190)). On stop success, `navigation.navigate('RunSummary', ...)` instead.
+
+**Layout:**
+
+```
++-----------------------------------------------+
+| ⏸  02:34 (Bebas)              [PlayerToken] |
++-----------------------------------------------+
+|                                               |
+|        <Mapbox parchment + polyline>          |
+|                                               |
+|   ╔═ Toast: "Claimed Bushwick! +120" ═╗      |
++-----------------------------------------------+
+| Surface (parchment HUD)                       |
+|  DISTANCE   TIME      POINTS                  |
+|  3.42 KM    18:42     342  ●●●●●●●●          |
+|                                               |
+|   ┌─────── PrimaryButton ───────┐             |
+|   │         STOP RUN             │            |
+|   └─────────────────────────────┘             |
++-----------------------------------------------+
+```
+
+**Changes:**
+
+- Polyline color → `userColorHex(session.user.id)` (was hardcoded `#3aa0ff` at [Run.tsx:117](screens/Run.tsx#L117)).
+- HUD wrapped in `Surface`, numbers swapped to `BebasNumber`.
+- **Region-entered toast (new behavior):** on each new GPS point, run `pointInPolygon` from [lib/geo.ts](lib/geo.ts) against loaded regions; on first entry to a region this run, push a `Toast`. Track visited regions in a local `Set`. Region list loaded once at mount via `regions_as_geojson` RPC.
+
+### Leaderboard — [screens/Leaderboard.tsx](screens/Leaderboard.tsx)
+
+**Hooks kept:** `region_scores`-with-`profiles!inner` query, realtime channel, `today` derivation, `Row` shape.
+
+**Layout:**
+
+```
++-----------------------------------------------+
+|  ← back   GREENWICH VILLAGE (Bebas)           |
+|           Today's leaderboard                 |
++-----------------------------------------------+
+| Surface (parchment, slight tilt -1°)          |
+|  ┌─ ScoreboardRow ─────────────────────────┐  |
+|  │  01  [Token] sam       1240 / 4.20 km   │  |
+|  │  02  [Token] you (me)   980 / 3.30 km   │  ← gold deckle on isMe
+|  │  03  [Token] alex       720 / 2.40 km   │  |
+|  └──────────────────────────────────────────┘  |
+|                                               |
+|  CountdownBadge: "Resets in 04:12:08"         |
++-----------------------------------------------+
+```
+
+**Changes:**
+
+- `ScoreboardRow` replaces inline row JSX (same data, prettier shell).
+- Small `PlayerToken` replaces 12px dot.
+- `CountdownBadge` to local midnight (client-side `setInterval`, no query).
+- Realtime onUpdate triggers 600ms row-bg-color pulse via Reanimated shared value keyed by `user_id`.
+
+### RunSummary — `screens/RunSummary.tsx` (new)
+
+**Wiring** in [App.tsx](App.tsx):
 
 ```ts
-// On every location callback in the BG task:
-const buffer = JSON.parse((await AsyncStorage.getItem(KEY)) ?? '[]');
-buffer.push({ ts, lat, lng, acc, speed });
-await AsyncStorage.setItem(KEY, JSON.stringify(buffer));
-// On Stop: read buffer, upload, then clear.
-// On app cold-start: if KEY exists, prompt "recover unsaved run?".
+<Stack.Screen name="RunSummary" component={RunSummary}
+  options={{ headerShown: false, presentation: 'modal' }} />
 ```
 
-### Anti-cheat filter (apply before saving each point)
+RootStack adds: `RunSummary: { distanceM, durationMs, points, pointCount, coords: [number,number][], userId, regionsClaimed: number[] }`.
 
-```ts
-if (loc.coords.accuracy > 50) return; // drop noisy point
-const dt = (loc.timestamp - last.timestamp) / 1000;
-const d = haversine(last, loc.coords);
-if (d / dt > 5.56) return; // 5.56 m/s = 20 km/h
+**Layout:**
+
+```
++-----------------------------------------------+
+|  ✕                                            |
+|         RUN COMPLETE (Bebas hero)             |
+|                                               |
+|  ┌── Surface (tilted -1°) ───────────────────┐|
+|  │   <Mapbox snapshot, route drawn over it> │|
+|  │   route animates in over ~1.8s on mount  │|
+|  └──────────────────────────────────────────┘|
+|                                               |
+|  3.42 KM (Bebas)        18:42 (Bebas)        |
+|                                               |
+|  CoinRow: 342 points  ●●●●●●●● (count-up)    |
+|  "Claimed: Bushwick, Williamsburg"            |
+|                                               |
+|  [Share card]  [Done]                         |
++-----------------------------------------------+
 ```
 
-### The line-clipping query (day 5)
+**Animated route playback (highest-ROI animation):**
 
-- Cast to `geography` **only when measuring** (`::geography` inside `ST_Length`). Doing the `ST_Intersection` in geography is slow.
-- Verify with one test run that hits 2 regions: the sum of intersected lengths should approximately equal the total Haversine distance.
+1. Render `Mapbox.snapshotManager.takeSnap({ ... styleURL: PARCHMENT_STYLE_URL })` as a static `<Image>` background.
+2. Overlay `react-native-svg` `<Path>` with `strokeDasharray` + animated `strokeDashoffset` driven by Reanimated `progress: 0 → 1` over 1800ms `Easing.out(Easing.cubic)`. Convert lat/lng → pixel space via the snapshot bbox. Avoids "animating live MapView" entirely.
 
-### Mapbox layer for "owned" regions
-
-- One `FillLayer` with a data-driven style: `fillColor: ['get', 'ownerColor']`. Build the FeatureCollection on the client by joining `regions` with `daily_region_winners` once on screen mount.
-
-### Seed script approach (day 8)
-
-- Generate runs as random walks inside a region's bounding box, then `ST_Intersection` them with the region polygon to keep them realistic.
-- Bypass RLS via `service_role` key (server-side only — never ship this key in the app).
+**Score count-up:** `BebasNumber` tweens 0 → value over 1200ms via `useAnimatedReaction` writing to `useState` (Reanimated can't animate text content directly — standard workaround).
 
 ---
 
-## Risks & Mitigations
+## Animation strategy — `react-native-reanimated` v4
 
-| Risk                                                                      | Likelihood | Mitigation                                                                                           |
-| ------------------------------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------- |
-| iOS `Always` permission rejected → no background tracking on iOS          | High       | Build & demo on Android first (easier permissions). iOS becomes "stretch" not blocker.               |
-| EAS build queue takes 30+ min, eating dev time                            | Medium     | Trigger builds in background while you work on backend / SQL locally.                                |
-| `pg_cron` unavailable on your Supabase plan                               | Medium     | Fallback to a daily Edge Function or compute "today's leader" via a view on read.                    |
-| GPS noise indoors makes testing miserable                                 | High       | Test outdoors only. Have a mock-location dev toggle (`expo-location` mocking) for indoor work.       |
-| `ST_Intersection` returns MultiLineString and edge cases break length sum | Medium     | Wrap the line operations in `ST_CollectionExtract(..., 2)` and verify with one known route on day 5. |
-| Mapbox config plugin breaks Android dev build                             | Low–Medium | Test the empty Mapbox map on day 1, before any other features depend on it.                          |
-| Solo dev burnout / scope creep                                            | Constant   | If a day slips, cut Day 7's "owned by you" badge and Day 8's polish — never cut Days 1–6.            |
+Add via `npx expo install react-native-reanimated react-native-svg react-native-view-shot expo-sharing expo-font`.
 
----
+| Element                                | Animation                                   | Cost    |
+| -------------------------------------- | ------------------------------------------- | ------- |
+| `PlayerToken` pulse ring               | `withRepeat(withTiming(scale 1→1.6, 1500))` | trivial |
+| `ChallengeCard` slide-up               | `withSpring(translateY)` on mount           | trivial |
+| `Toast` slide-down + auto-dismiss 2.5s | `withSpring`                                | trivial |
+| `RunSummary` route draw                | SVG `strokeDashoffset` 1.8s                 | medium  |
+| `BebasNumber` count-up                 | `useAnimatedReaction` → state               | trivial |
+| `CoinRow` stagger                      | `withDelay(i*80, withSpring(scale))`        | trivial |
+| Leaderboard row pulse on update        | bg-color tween 600ms                        | trivial |
 
-## Verification (how to know it actually works end-to-end)
+**Top-3 ROI (build first, sells the redesign on its own):**
 
-1. **Auth:** Sign up two accounts on the same dev-build. Both appear in `profiles`.
-2. **Region rendering:** Map shows ~10–25 translucent polygons over your city.
-3. **Background tracking:** Start a run, lock the phone, walk a 5-minute loop, return — `runs` row exists with `distance_m` matching reality within ±10%.
-4. **Region attribution:** A run that crosses 2 regions creates 2 rows in `region_scores` whose summed `distance_m` ≈ `runs.distance_m`.
-5. **Leaderboard:** Two accounts, two runs in the same region — the higher-scoring one appears on top, live.
-6. **Daily snapshot:** Manually invoke the snapshot function with `current_date` — `daily_region_winners` populates correctly.
-7. **Map ownership:** Home screen colors the region you won.
-8. **Demo data:** After running the seed script, every region has a populated leaderboard and a colored owner.
+1. RunSummary animated route draw
+2. PlayerToken pulse ring (used on 4 screens)
+3. RunSummary count-up + coin pop-in
+
+**Skip:** on-map polygon pulsing (forces Mapbox redraws, janky), live-Run polyline progressive draw (user is staring at the road).
 
 ---
 
-## Files / paths to create
+## Share-card export
 
-```
-run-it/
-├── app.json                          # Expo + plugins (location, mapbox)
-├── eas.json                          # dev / preview / prod build profiles
-├── .env                              # SUPABASE_URL, ANON_KEY, MAPBOX_TOKEN
-├── App.tsx                           # nav + auth gate
-├── lib/
-│   ├── supabase.ts
-│   ├── location.ts                   # TaskManager + filters + buffer
-│   └── distance.ts                   # haversine for UI only
-├── screens/
-│   ├── SignIn.tsx
-│   ├── MapHome.tsx
-│   ├── Run.tsx
-│   ├── Leaderboard.tsx
-│   └── Profile.tsx
-├── supabase/
-│   ├── schema.sql                    # tables + indexes + RLS
-│   ├── functions.sql                 # process_run + snapshot
-│   ├── cron.sql                      # pg_cron schedule (or edge fn)
-│   └── seed/
-│       ├── load_regions.ts           # OSM GeoJSON → regions table
-│       └── fake_users.ts             # 8 users + 30 synthetic runs
-└── README.md                         # demo gif, arch diagram, schema
-```
+- `react-native-view-shot` wraps an off-screen sub-tree (`position: absolute; left: -9999`) at fixed 1080×1920 (IG story).
+- Capture: `await ref.current.capture({ format: 'png', quality: 1 })` → file URI.
+- Share: `expo-sharing` `Sharing.shareAsync(uri, { mimeType: 'image/png' })`.
+
+**Critical caveat:** `view-shot` cannot reliably capture a live `<MapView>` on Android (separate GL surface — comes back blank). Fix: never include MapView in the captured tree. Use the same `Mapbox.snapshotManager.takeSnap` PNG that powers the on-screen visual; SVG route overlays on top — both plain RN views, capture works.
+
+Fallback if `snapshotManager` API drift in `@rnmapbox/maps` 10.3: Mapbox Static Images REST API (`https://api.mapbox.com/styles/v1/{user}/{styleId}/static/...`).
+
+---
+
+## Sequenced milestones (~14 working days)
+
+**M1 — Foundation (days 1–2)**
+Deps install, babel config for Reanimated, fonts in `assets/fonts/`, build `lib/ui/{tokens,typography,fonts,theme,ThemeProvider}.ts`, wire into [App.tsx](App.tsx), update `navTheme`.
+**Demo:** app boots on cream background, Bebas Neue in headers, screens still functional but visually inconsistent.
+
+**M2 — Primitives (days 3–5)**
+Build all 10 components in `lib/ui/components/`. Build `screens/_DesignSystem.tsx` for visual QA.
+**Demo:** dev-only design system screen shows every primitive including pulse animation.
+
+**M3 — Mapbox parchment + MapHome (days 6–8)**
+Build parchment style in Studio, paste URL in `app.json`. Restyle [MapHome.tsx](screens/MapHome.tsx): parchment basemap, header strip, segmented Today/Yesterday, ChallengeCard popup.
+**Demo:** map matches reference HTML; tapping a region pops a card.
+
+**M4 — Run + RunSummary (days 9–12)**
+Restyle [Run.tsx](screens/Run.tsx) HUD, per-user polyline color, region-entered toast. Strip in-screen modal, navigate to RunSummary. Build `screens/RunSummary.tsx`: snapshot, animated SVG route, count-up, coin row, share button via `view-shot` + `expo-sharing`.
+**Demo:** full happy path — start, stop, see animated summary, share PNG.
+
+**M5 — Leaderboard + polish (days 13–14)**
+Restyle [Leaderboard.tsx](screens/Leaderboard.tsx) with ScoreboardRow, CountdownBadge, row-pulse on realtime update. Apply Surface chrome + Bebas headers to [Profile.tsx](screens/Profile.tsx) (no layout work). iOS + Android dev-client QA. Tweak shadows, scales, timings.
+**Demo:** full app feels cohesive on both platforms.
+
+---
+
+## Risks & gotchas
+
+1. **Reanimated babel plugin** must be the **last** plugin in `babel.config.js`. After install, `npx expo start --clear`. Forgetting → silent "worklet not compiled" no-op.
+2. **Custom font caching on Android dev-build.** Use distinct family keys (`BebasNeue`, no spaces). May need `npx expo prebuild --clean` first time fonts are added — Metro reload alone won't pick up native asset changes.
+3. **Mapbox Studio fonts** may require paid tier in some regions. Fallback: built-in serif options.
+4. **`view-shot` + Mapbox.** Never capture live MapView (covered above).
+5. **`Mapbox.snapshotManager` API drift** in `@rnmapbox/maps` 10.x. Verify against installed 10.3 docs. Fallback: Static Images REST API.
+6. **Nav-param coord payload** — fine up to ~2000 GPS points. Beyond that, persist run id and re-fetch polyline on RunSummary mount.
+
+### Cut order if time slips
+
+1. On-map `PlayerToken` overlays at region centroids
+2. Region-entered toast on Run
+3. Share-card export (keep RunSummary itself)
+4. Leaderboard row-pulse on realtime update
+5. **Last resort:** custom Mapbox parchment style → fall back to `Mapbox.StyleURL.Light`. Do **not** cut Bebas Neue / parchment chrome — that's 80% of the perceived redesign.
+
+### Out of scope
+
+- New backend tables/columns (region-entered tracking is client-side only)
+- State management library
+- `lib/colors.ts` rewrite (load-bearing for Mapbox data-driven styling)
+- Profile redesign beyond chrome/font swap
+
+---
+
+## Critical files to create / modify
+
+**New:**
+
+- `lib/ui/tokens.ts`, `typography.ts`, `fonts.ts`, `theme.ts`, `ThemeProvider.tsx`, `index.ts`
+- `lib/ui/components/{Surface,PlayerToken,CoinRow,ChallengeCard,CountdownBadge,BebasNumber,ScoreboardRow,PrimaryButton,SecondaryButton,Toast}.tsx`
+- `screens/RunSummary.tsx`
+- `screens/_DesignSystem.tsx` (dev-only)
+- `assets/fonts/{BebasNeue-Regular,Inter-Regular,Inter-Bold}.ttf`
+
+**Modify:**
+
+- [App.tsx](App.tsx) — add ThemeProvider + useAppFonts gate, parchment navTheme, register RunSummary screen, read `mapboxParchmentStyleUrl` from `extra`
+- [screens/MapHome.tsx](screens/MapHome.tsx) — parchment styleURL, header strip, segmented Today/Yesterday, ChallengeCard popup
+- [screens/Run.tsx](screens/Run.tsx) — Surface HUD, BebasNumber, per-user polyline color, region-entered toast, navigate to RunSummary
+- [screens/Leaderboard.tsx](screens/Leaderboard.tsx) — ScoreboardRow, CountdownBadge, row-pulse
+- [screens/Profile.tsx](screens/Profile.tsx) — chrome/font swap only
+- `app.json` — `extra.mapboxParchmentStyleUrl`
+- `babel.config.js` — add `react-native-reanimated/plugin` last
+- `package.json` — new deps via `expo install`
+
+**Reused unchanged:**
+
+- All of `supabase/`, `lib/supabase.ts`, `lib/auth.tsx`, `lib/location.ts`, `lib/runs.ts`, `lib/distance.ts`, `lib/geo.ts`, `lib/colors.ts`, `scripts/*`
+
+---
+
+## Verification
+
+End-to-end happy path on a physical phone:
+
+1. Cold-launch — splash → auth gate → SignIn (parchment, Bebas inputs).
+2. Sign in → MapHome shows parchment basemap + colored regions. Toggle Today/Yesterday — colors shift. Tap a region → ChallengeCard slides up.
+3. Tap Run tab → HUD in parchment. Tap Start → permission flow → polyline draws in your color as you walk. Cross into another region → toast.
+4. Tap Stop → navigate to RunSummary. Watch route draw over snapshot, score count up, coins pop in. Tap Share → PNG opens in share sheet.
+5. Tap Done → back to MapHome. Tap your region → Leaderboard shows your row pulsing gold, CountdownBadge ticking.
+6. Run `_DesignSystem` screen (dev only) — every primitive renders correctly on iOS and Android.
+
+Pre-flight: `npm run typecheck`, `npm run doctor`, no Reanimated worklet warnings in Metro logs.

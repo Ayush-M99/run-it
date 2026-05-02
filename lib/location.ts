@@ -76,8 +76,16 @@ if (!TaskManager.isTaskDefined(BG_TASK)) {
 }
 
 export async function ensurePermissions(): Promise<{ granted: boolean; reason?: string }> {
+  // iOS requires WhenInUse first; request it unconditionally so the OS upgrade
+  // prompt ("Change to Always Allow") is shown in the correct sequence.
   const fg = await Location.requestForegroundPermissionsAsync();
   if (fg.status !== 'granted') return { granted: false, reason: 'Foreground location denied' };
+
+  // Short-circuit if background is already granted — avoids a redundant prompt
+  // on subsequent launches after the user already allowed "Always".
+  const bgCurrent = await Location.getBackgroundPermissionsAsync();
+  if (bgCurrent.status === 'granted') return { granted: true };
+
   const bg = await Location.requestBackgroundPermissionsAsync();
   if (bg.status !== 'granted') return { granted: false, reason: 'Background location denied' };
   return { granted: true };
@@ -99,7 +107,7 @@ export async function startRun(): Promise<{ ok: boolean; reason?: string }> {
     foregroundService: {
       notificationTitle: 'Run-It is tracking your run',
       notificationBody: 'Tap to return to the app.',
-      notificationColor: '#0b1a2b',
+      notificationColor: '#1A1A2E',
     },
     pausesUpdatesAutomatically: false,
     activityType: Location.ActivityType.Fitness,

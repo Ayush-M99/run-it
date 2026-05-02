@@ -1,12 +1,25 @@
 import { useEffect, useState } from 'react';
-import { View, StyleSheet, Text, ActivityIndicator } from 'react-native';
-import Mapbox, { MapView, Camera, ShapeSource, FillLayer, LineLayer } from '@rnmapbox/maps';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { MapView, Camera, ShapeSource, FillLayer, LineLayer } from '@rnmapbox/maps';
+import Constants from 'expo-constants';
 import { supabase } from '../lib/supabase';
 import { userColorHex } from '../lib/colors';
 import { useAuth } from '../lib/auth';
+import { useTheme } from '../lib/ui';
+import { ChallengeCard } from '../lib/ui/components';
 
 type RegionRow = { id: number; name: string; geom: GeoJSON.Polygon };
-type TerritoryOwner = { region_id: number; user_id: string; points: number; distance_m?: number };
+type TerritoryOwner = {
+  region_id: number;
+  user_id: string;
+  points: number;
+  distance_m?: number;
+  display_name?: string;
+};
+
+const PARCHMENT_STYLE =
+  (Constants.expoConfig?.extra?.mapboxParchmentStyleUrl as string | undefined) ??
+  'mapbox://styles/mapbox/outdoors-v12';
 
 const FALLBACK_CENTER: [number, number] = [-74.006, 40.7128];
 
@@ -16,38 +29,37 @@ export default function MapHome({
   onRegionTap: (regionId: number, regionName: string) => void;
 }) {
   const { session } = useAuth();
+  const { palette } = useTheme();
   const [regions, setRegions] = useState<RegionRow[]>([]);
   const [yesterdayWinners, setYesterdayWinners] = useState<Record<number, TerritoryOwner>>({});
   const [todayLeaders, setTodayLeaders] = useState<Record<number, TerritoryOwner>>({});
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<'today' | 'yesterday'>('today');
+
+  // card state
+  const [cardVisible, setCardVisible] = useState(false);
+  const [cardRegion, setCardRegion] = useState<{ id: number; name: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // Fetch regions as GeoJSON via PostGIS ST_AsGeoJSON.
       const { data: rs, error } = await supabase.rpc('regions_as_geojson');
       if (cancelled) return;
       if (error) {
-        console.warn('regions load failed', error.message);
         setLoading(false);
         return;
       }
       const parsed: RegionRow[] = (rs as Array<{ id: number; name: string; geojson: string }>).map(
-        (r) => ({
-          id: r.id,
-          name: r.name,
-          geom: JSON.parse(r.geojson) as GeoJSON.Polygon,
-        }),
+        (r) => ({ id: r.id, name: r.name, geom: JSON.parse(r.geojson) as GeoJSON.Polygon }),
       );
       setRegions(parsed);
 
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
-      const dateStr = yesterday.toISOString().slice(0, 10);
       const { data: ws } = await supabase
         .from('daily_region_winners')
         .select('region_id,user_id,points')
-        .eq('date', dateStr);
+        .eq('date', yesterday.toISOString().slice(0, 10));
       if (cancelled) return;
       const byRegion: Record<number, TerritoryOwner> = {};
       for (const w of (ws ?? []) as TerritoryOwner[]) byRegion[w.region_id] = w;
@@ -65,11 +77,7 @@ export default function MapHome({
 
     async function loadTodayLeaders() {
       const { data, error } = await supabase.rpc('current_region_leaders', { p_date: today });
-      if (cancelled) return;
-      if (error) {
-        console.warn('today leaders load failed', error.message);
-        return;
-      }
+      if (cancelled || error) return;
       const byRegion: Record<number, TerritoryOwner> = {};
       for (const leader of (data ?? []) as TerritoryOwner[]) byRegion[leader.region_id] = leader;
       setTodayLeaders(byRegion);
@@ -80,12 +88,7 @@ export default function MapHome({
       .channel(`map-current-leaders:${today}`)
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'region_scores',
-          filter: `date=eq.${today}`,
-        },
+        { event: '*', schema: 'public', table: 'region_scores', filter: `date=eq.${today}` },
         () => loadTodayLeaders(),
       )
       .subscribe();
@@ -96,10 +99,12 @@ export default function MapHome({
     };
   }, []);
 
+  const owners = view === 'today' ? todayLeaders : yesterdayWinners;
+
   const fc: GeoJSON.FeatureCollection = {
     type: 'FeatureCollection',
     features: regions.map((r) => {
-      const owner = todayLeaders[r.id] ?? yesterdayWinners[r.id];
+      const owner = owners[r.id];
       const isMine = !!session && owner?.user_id === session.user.id;
       return {
         type: 'Feature',
@@ -107,7 +112,7 @@ export default function MapHome({
         properties: {
           regionId: r.id,
           name: r.name,
-          fillColor: owner ? userColorHex(owner.user_id) : '#2a3b50',
+          fillColor: owner ? userColorHex(owner.user_id) : palette.landFill,
           isMine,
         },
         geometry: r.geom,
@@ -119,30 +124,51 @@ export default function MapHome({
     ? [regions[0].geom.coordinates[0][0][0], regions[0].geom.coordinates[0][0][1]]
     : FALLBACK_CENTER;
 
+  function handleRegionPress(e: any) {
+    const f = e.features[0] as GeoJSON.Feature | undefined;
+    const props = f?.properties as { regionId?: number; name?: string } | undefined;
+    if (props?.regionId != null && props.name) {
+      setCardRegion({ id: props.regionId, name: props.name });
+      setCardVisible(true);
+    }
+  }
+
+  const cardOwner = cardRegion ? owners[cardRegion.id] : undefined;
+
   return (
     <View style={styles.root}>
-      <MapView style={styles.map} styleURL={Mapbox.StyleURL.Dark}>
+      {/* header strip */}
+      <View
+        style={[
+          styles.header,
+          { backgroundColor: palette.ink, borderBottomColor: palette.glowGold },
+        ]}
+      >
+        <Text style={[styles.appName, { color: palette.glowGold }]}>RUN-IT</Text>
+        <View style={[styles.toggle, { borderColor: palette.landEdge }]}>
+          <ToggleOption label="Today" active={view === 'today'} onPress={() => setView('today')} />
+          <ToggleOption
+            label="Yesterday"
+            active={view === 'yesterday'}
+            onPress={() => setView('yesterday')}
+          />
+        </View>
+      </View>
+
+      <MapView style={styles.map} styleURL={PARCHMENT_STYLE}>
         <Camera centerCoordinate={center as [number, number]} zoomLevel={12} />
         {regions.length > 0 && (
-          <ShapeSource
-            id="regions"
-            shape={fc}
-            onPress={(e) => {
-              const f = e.features[0] as GeoJSON.Feature | undefined;
-              const props = f?.properties as { regionId?: number; name?: string } | undefined;
-              if (props?.regionId != null && props.name) onRegionTap(props.regionId, props.name);
-            }}
-          >
+          <ShapeSource id="regions" shape={fc} onPress={handleRegionPress}>
             <FillLayer
               id="regions-fill"
-              style={{ fillColor: ['get', 'fillColor'], fillOpacity: 0.45 }}
+              style={{ fillColor: ['get', 'fillColor'], fillOpacity: 0.3 }}
             />
             <LineLayer
               id="regions-line"
               style={{
-                lineColor: ['case', ['get', 'isMine'], '#ffd84a', '#ffffff'],
-                lineWidth: ['case', ['get', 'isMine'], 3, 1],
-                lineOpacity: 0.6,
+                lineColor: ['case', ['get', 'isMine'], palette.glowGold, palette.landEdge],
+                lineWidth: ['case', ['get', 'isMine'], 3, 1.5],
+                lineOpacity: 0.85,
               }}
             />
           </ShapeSource>
@@ -150,46 +176,103 @@ export default function MapHome({
       </MapView>
 
       {loading && (
-        <View style={styles.loadingBadge}>
-          <ActivityIndicator color="#fff" />
-          <Text style={styles.loadingText}>Loading map…</Text>
+        <View style={[styles.loadingBadge, { backgroundColor: `${palette.ink}ee` }]}>
+          <ActivityIndicator color={palette.glowGold} />
+          <Text style={[styles.loadingText, { color: palette.cream }]}>Loading map…</Text>
         </View>
       )}
+
       {!loading && regions.length === 0 && (
-        <View style={styles.emptyBadge}>
-          <Text style={styles.emptyText}>
-            No regions loaded. Run `npx tsx scripts/fetch_regions.ts "&lt;city&gt;"` then `npx tsx
-            scripts/load_regions.ts`.
+        <View style={[styles.emptyBadge, { backgroundColor: palette.red }]}>
+          <Text style={[styles.emptyText, { color: palette.white }]}>
+            No regions loaded. Run `npm run regions:fetch` then `npm run regions:load`.
           </Text>
         </View>
       )}
+
+      {/* region card */}
+      <ChallengeCard
+        visible={cardVisible}
+        regionName={cardRegion?.name ?? ''}
+        ownerUserId={cardOwner?.user_id}
+        ownerName={cardOwner?.display_name}
+        points={cardOwner?.points}
+        distanceKm={cardOwner?.distance_m != null ? cardOwner.distance_m / 1000 : undefined}
+        onOpenLeaderboard={() => {
+          setCardVisible(false);
+          if (cardRegion) onRegionTap(cardRegion.id, cardRegion.name);
+        }}
+        onDismiss={() => setCardVisible(false)}
+      />
     </View>
   );
 }
 
+function ToggleOption({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  const { palette, radii } = useTheme();
+  return (
+    <TouchableOpacity
+      style={[
+        styles.toggleOption,
+        { backgroundColor: active ? palette.glowGold : 'transparent', borderRadius: radii.sm },
+      ]}
+      onPress={onPress}
+    >
+      <Text style={[styles.toggleText, { color: active ? palette.ink : palette.dim }]}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0b1a2b' },
+  root: { flex: 1 },
   map: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 52,
+    paddingBottom: 12,
+    borderBottomWidth: 2,
+  },
+  appName: { fontFamily: 'BebasNeue', fontSize: 24, letterSpacing: 3 },
+  toggle: {
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderRadius: 8,
+    overflow: 'hidden',
+    padding: 2,
+  },
+  toggleOption: { paddingHorizontal: 12, paddingVertical: 6 },
+  toggleText: { fontFamily: 'Inter-Bold', fontSize: 12, letterSpacing: 0.5 },
   loadingBadge: {
     position: 'absolute',
-    top: 60,
+    top: 120,
     alignSelf: 'center',
     flexDirection: 'row',
-    backgroundColor: 'rgba(11,26,43,0.9)',
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
     gap: 8,
   },
-  loadingText: { color: '#fff' },
+  loadingText: { fontFamily: 'Inter', fontSize: 13 },
   emptyBadge: {
     position: 'absolute',
     bottom: 100,
     left: 16,
     right: 16,
-    backgroundColor: 'rgba(255,140,0,0.92)',
     padding: 14,
     borderRadius: 10,
   },
-  emptyText: { color: '#fff', fontSize: 13, lineHeight: 18 },
+  emptyText: { fontSize: 13, lineHeight: 18, fontFamily: 'Inter' },
 });

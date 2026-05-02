@@ -43,7 +43,9 @@ create table if not exists region_scores (
   date date not null,
   distance_m numeric not null default 0,
   points int not null default 0,
-  primary key (region_id, user_id, date)
+  primary key (region_id, user_id, date),
+  -- FK to profiles lets PostgREST resolve the join in leaderboard queries.
+  constraint region_scores_profile_fkey foreign key (user_id) references profiles(user_id) on delete cascade
 );
 create index if not exists region_scores_lookup
   on region_scores (region_id, date, points desc);
@@ -53,7 +55,8 @@ create table if not exists daily_region_winners (
   date date not null,
   user_id uuid not null references auth.users on delete cascade,
   points int not null,
-  primary key (region_id, date)
+  primary key (region_id, date),
+  constraint daily_region_winners_profile_fkey foreign key (user_id) references profiles(user_id) on delete cascade
 );
 create index if not exists daily_region_winners_user_idx
   on daily_region_winners (user_id, date desc);

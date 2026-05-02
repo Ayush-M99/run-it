@@ -1,15 +1,10 @@
 import { useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ActivityIndicator,
-  ScrollView,
-} from 'react-native';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
 import { userColorHex } from '../lib/colors';
+import { useTheme } from '../lib/ui';
+import { Surface, BebasNumber, SecondaryButton } from '../lib/ui/components';
 
 type Stats = {
   displayName: string;
@@ -19,14 +14,11 @@ type Stats = {
   regionsLeadingToday: number;
 };
 
-type RunRow = {
-  id: string;
-  started_at: string;
-  distance_m: number;
-};
+type RunRow = { id: string; started_at: string; distance_m: number };
 
 export default function Profile() {
   const { session, signOut } = useAuth();
+  const { palette, radii } = useTheme();
   const [stats, setStats] = useState<Stats | null>(null);
   const [recent, setRecent] = useState<RunRow[]>([]);
 
@@ -63,55 +55,100 @@ export default function Profile() {
   }, [session]);
 
   if (!session) return null;
-  if (!stats)
-    return (
-      <View style={styles.root}>
-        <ActivityIndicator color="#fff" style={{ marginTop: 64 }} />
-      </View>
-    );
+
+  const avatarColor = userColorHex(session.user.id);
 
   return (
-    <ScrollView style={styles.root} contentContainerStyle={{ padding: 24 }}>
+    <ScrollView
+      style={[styles.root, { backgroundColor: palette.parchment }]}
+      contentContainerStyle={{ padding: 24 }}
+    >
+      {/* avatar */}
       <View style={styles.header}>
-        <View style={[styles.avatar, { backgroundColor: userColorHex(session.user.id) }]} />
-        <Text style={styles.name}>{stats.displayName}</Text>
-        <Text style={styles.email}>{session.user.email}</Text>
+        <View
+          style={[styles.avatar, { backgroundColor: avatarColor, borderColor: palette.landEdge }]}
+        >
+          <Text style={[styles.avatarInitial, { color: '#fff', fontFamily: 'BebasNeue' }]}>
+            {(stats?.displayName ?? '?').slice(0, 1).toUpperCase()}
+          </Text>
+        </View>
+        <Text style={[styles.name, { color: palette.ink, fontFamily: 'BebasNeue' }]}>
+          {stats?.displayName ?? '…'}
+        </Text>
+        <Text style={[styles.email, { color: palette.parchmentMid }]}>{session.user.email}</Text>
       </View>
 
-      <View style={styles.statsGrid}>
-        <Stat label="Runs" value={String(stats.totalRuns)} />
-        <Stat label="Total km" value={(stats.totalDistanceM / 1000).toFixed(1)} />
-        <Stat label="Regions won" value={String(stats.regionsWon)} />
-      </View>
+      {/* stats */}
+      <Surface style={{ marginBottom: 16 }}>
+        <View style={styles.statsRow}>
+          <StatBlock label="Runs" value={stats?.totalRuns ?? 0} />
+          <View style={[styles.divider, { backgroundColor: palette.landEdge }]} />
+          <StatBlock label="Total km" value={((stats?.totalDistanceM ?? 0) / 1000).toFixed(1)} />
+          <View style={[styles.divider, { backgroundColor: palette.landEdge }]} />
+          <StatBlock label="Won" value={stats?.regionsWon ?? 0} />
+        </View>
+      </Surface>
 
-      <View style={styles.callout}>
-        <Text style={styles.calloutLabel}>Leading right now</Text>
-        <Text style={styles.calloutValue}>
-          {stats.regionsLeadingToday} {stats.regionsLeadingToday === 1 ? 'region' : 'regions'} today
+      {/* leading callout */}
+      <View
+        style={[
+          styles.callout,
+          { backgroundColor: `${avatarColor}22`, borderColor: avatarColor, borderRadius: radii.md },
+        ]}
+      >
+        <Text style={[styles.calloutLabel, { color: palette.parchmentMid }]}>
+          Leading right now
+        </Text>
+        <Text style={[styles.calloutValue, { color: palette.ink, fontFamily: 'BebasNeue' }]}>
+          {stats?.regionsLeadingToday ?? 0}{' '}
+          {(stats?.regionsLeadingToday ?? 0) === 1 ? 'region' : 'regions'}
         </Text>
       </View>
 
-      <Text style={styles.sectionLabel}>Recent runs</Text>
+      {/* recent runs */}
+      <Text style={[styles.sectionLabel, { color: palette.parchmentMid }]}>Recent runs</Text>
       {recent.length === 0 ? (
-        <Text style={styles.empty}>No runs yet. Hit the Run tab and start one.</Text>
+        <Text style={[styles.empty, { color: palette.parchmentMid }]}>No runs yet.</Text>
       ) : (
-        recent.map((r) => (
-          <View key={r.id} style={styles.runRow}>
-            <Text style={styles.runDate}>{new Date(r.started_at).toLocaleString()}</Text>
-            <Text style={styles.runDist}>{(Number(r.distance_m) / 1000).toFixed(2)} km</Text>
-          </View>
-        ))
+        <Surface style={{ overflow: 'hidden', marginBottom: 24 }}>
+          {recent.map((r, i) => (
+            <View
+              key={r.id}
+              style={[
+                styles.runRow,
+                {
+                  borderBottomColor: palette.landEdge,
+                  borderBottomWidth: i < recent.length - 1 ? 1 : 0,
+                },
+              ]}
+            >
+              <Text style={[styles.runDate, { color: palette.ink }]}>
+                {new Date(r.started_at).toLocaleString()}
+              </Text>
+              <Text style={[styles.runDist, { color: palette.blue, fontFamily: 'BebasNeue' }]}>
+                {(Number(r.distance_m) / 1000).toFixed(2)} KM
+              </Text>
+            </View>
+          ))}
+        </Surface>
       )}
 
-      <TouchableOpacity style={styles.signOut} onPress={signOut}>
-        <Text style={styles.signOutText}>Sign out</Text>
-      </TouchableOpacity>
+      <SecondaryButton label="Sign out" onPress={signOut} />
     </ScrollView>
   );
 }
 
+function StatBlock({ label, value }: { label: string; value: number | string }) {
+  const { palette } = useTheme();
+  return (
+    <View style={styles.statBlock}>
+      <BebasNumber value={value} size="score" style={{ color: palette.blue }} />
+      <Text style={[styles.statLabel, { color: palette.parchmentMid }]}>{label.toUpperCase()}</Text>
+    </View>
+  );
+}
+
 async function countLeadingRegions(userId: string, today: string): Promise<number> {
-  // For each region with any score today, find the top scorer; count where it's me.
   const { data, error } = await supabase
     .from('region_scores')
     .select('region_id,user_id,points')
@@ -119,71 +156,54 @@ async function countLeadingRegions(userId: string, today: string): Promise<numbe
     .order('points', { ascending: false });
   if (error || !data) return 0;
   const topByRegion = new Map<number, string>();
-  for (const r of data) {
-    if (!topByRegion.has(r.region_id)) topByRegion.set(r.region_id, r.user_id);
-  }
+  for (const r of data) if (!topByRegion.has(r.region_id)) topByRegion.set(r.region_id, r.user_id);
   let count = 0;
   for (const uid of topByRegion.values()) if (uid === userId) count++;
   return count;
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.stat}>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0b1a2b' },
-  header: { alignItems: 'center', marginTop: 16, marginBottom: 24 },
-  avatar: { width: 72, height: 72, borderRadius: 36, marginBottom: 12 },
-  name: { color: '#fff', fontSize: 22, fontWeight: '700' },
-  email: { color: '#7790aa', fontSize: 13, marginTop: 4 },
-  statsGrid: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 20 },
-  stat: { alignItems: 'center' },
-  statValue: { color: '#3aa0ff', fontSize: 28, fontWeight: '700' },
-  statLabel: {
-    color: '#7790aa',
-    fontSize: 12,
-    marginTop: 4,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  callout: {
-    backgroundColor: '#16263a',
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 24,
+  root: { flex: 1 },
+  header: { alignItems: 'center', marginBottom: 24 },
+  avatar: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    marginBottom: 12,
     alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
   },
-  calloutLabel: { color: '#7790aa', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 },
-  calloutValue: { color: '#ffd84a', fontSize: 18, fontWeight: '600', marginTop: 4 },
-  sectionLabel: {
-    color: '#7790aa',
-    fontSize: 12,
+  avatarInitial: { fontSize: 36, lineHeight: 40 },
+  name: { fontSize: 32, letterSpacing: 1 },
+  email: { fontFamily: 'Inter', fontSize: 13, marginTop: 2 },
+  statsRow: { flexDirection: 'row', padding: 12 },
+  statBlock: { flex: 1, alignItems: 'center', paddingVertical: 8 },
+  statLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter',
+    letterSpacing: 1.2,
     textTransform: 'uppercase',
-    letterSpacing: 1,
+    marginTop: 2,
+  },
+  divider: { width: 1, marginVertical: 4 },
+  callout: { padding: 16, alignItems: 'center', marginBottom: 24, borderWidth: 1.5 },
+  calloutLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter',
+    textTransform: 'uppercase',
+    letterSpacing: 1.5,
+  },
+  calloutValue: { fontSize: 28, letterSpacing: 1, marginTop: 4 },
+  sectionLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter',
+    textTransform: 'uppercase',
+    letterSpacing: 1.5,
     marginBottom: 8,
   },
-  runRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#16263a',
-  },
-  runDate: { color: '#fff', fontSize: 14 },
-  runDist: { color: '#3aa0ff', fontSize: 14, fontWeight: '600' },
-  empty: { color: '#7790aa', textAlign: 'center', marginTop: 12 },
-  signOut: {
-    backgroundColor: '#16263a',
-    padding: 14,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginTop: 32,
-  },
-  signOutText: { color: '#ff8b8b', fontSize: 15, fontWeight: '600' },
+  empty: { fontFamily: 'Inter', fontSize: 14, marginBottom: 24 },
+  runRow: { flexDirection: 'row', justifyContent: 'space-between', padding: 12 },
+  runDate: { fontFamily: 'Inter', fontSize: 13 },
+  runDist: { fontSize: 18 },
 });

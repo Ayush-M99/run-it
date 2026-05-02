@@ -1,14 +1,8 @@
 import { useState } from 'react';
-import {
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
+import { Text, TextInput, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { useAuth } from '../lib/auth';
+import { palette as P } from '../lib/ui';
+import { PrimaryButton, SecondaryButton } from '../lib/ui/components';
 
 export default function SignIn() {
   const { signIn, signUp } = useAuth();
@@ -35,7 +29,7 @@ export default function SignIn() {
       style={styles.root}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <Text style={styles.title}>Run-It</Text>
+      <Text style={styles.wordmark}>RUN-IT</Text>
       <Text style={styles.subtitle}>
         {mode === 'in' ? 'Sign in to claim regions' : 'Create your account'}
       </Text>
@@ -44,7 +38,7 @@ export default function SignIn() {
         <TextInput
           style={styles.input}
           placeholder="Display name"
-          placeholderTextColor="#7790aa"
+          placeholderTextColor={P.parchmentMid}
           value={displayName}
           onChangeText={setDisplayName}
           autoCapitalize="none"
@@ -53,7 +47,7 @@ export default function SignIn() {
       <TextInput
         style={styles.input}
         placeholder="Email"
-        placeholderTextColor="#7790aa"
+        placeholderTextColor={P.parchmentMid}
         value={email}
         onChangeText={setEmail}
         autoCapitalize="none"
@@ -63,7 +57,7 @@ export default function SignIn() {
       <TextInput
         style={styles.input}
         placeholder="Password"
-        placeholderTextColor="#7790aa"
+        placeholderTextColor={P.parchmentMid}
         value={password}
         onChangeText={setPassword}
         secureTextEntry
@@ -72,43 +66,41 @@ export default function SignIn() {
 
       {err && <Text style={styles.err}>{err}</Text>}
 
-      <TouchableOpacity style={styles.btn} onPress={submit} disabled={busy}>
-        {busy ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.btnText}>{mode === 'in' ? 'Sign in' : 'Sign up'}</Text>
-        )}
-      </TouchableOpacity>
+      <PrimaryButton
+        label={mode === 'in' ? 'Sign in' : 'Sign up'}
+        onPress={submit}
+        loading={busy}
+        style={{ marginTop: 8, marginBottom: 10 }}
+      />
 
-      <TouchableOpacity onPress={() => setMode(mode === 'in' ? 'up' : 'in')}>
-        <Text style={styles.switch}>
-          {mode === 'in' ? 'New here? Create an account' : 'Have an account? Sign in'}
-        </Text>
-      </TouchableOpacity>
+      <SecondaryButton
+        label={mode === 'in' ? 'New here? Create account' : 'Have account? Sign in'}
+        onPress={() => setMode(mode === 'in' ? 'up' : 'in')}
+      />
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0b1a2b', padding: 24, justifyContent: 'center' },
-  title: { color: '#fff', fontSize: 36, fontWeight: '700', marginBottom: 4 },
-  subtitle: { color: '#7790aa', fontSize: 15, marginBottom: 32 },
+  root: { flex: 1, backgroundColor: P.parchment, padding: 28, justifyContent: 'center' },
+  wordmark: {
+    fontFamily: 'BebasNeue',
+    color: P.ink,
+    fontSize: 56,
+    letterSpacing: 4,
+    marginBottom: 4,
+  },
+  subtitle: { fontFamily: 'Inter', color: P.parchmentMid, fontSize: 15, marginBottom: 32 },
   input: {
-    backgroundColor: '#16263a',
-    color: '#fff',
+    backgroundColor: P.landFill,
+    color: P.parchmentInk,
     borderRadius: 10,
     padding: 14,
     marginBottom: 12,
     fontSize: 16,
+    fontFamily: 'Inter',
+    borderWidth: 1.5,
+    borderColor: P.landEdge,
   },
-  btn: {
-    backgroundColor: '#3aa0ff',
-    borderRadius: 10,
-    padding: 16,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  btnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  switch: { color: '#7790aa', textAlign: 'center', marginTop: 20 },
-  err: { color: '#ff8b8b', marginBottom: 8 },
+  err: { fontFamily: 'Inter', color: P.red, marginBottom: 8, fontSize: 13 },
 });
