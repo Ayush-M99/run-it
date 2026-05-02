@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { StyleSheet, View, Text, ActivityIndicator } from 'react-native';
+import { useEffect } from 'react';
+import { StyleSheet, View, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -131,26 +131,15 @@ function LeaderboardScreen({ route }: any) {
 }
 
 export default function App() {
-  const [tokenError, setTokenError] = useState<string | null>(null);
-
   useEffect(() => {
     if (!MAPBOX_TOKEN || MAPBOX_TOKEN.startsWith('PASTE_')) {
-      setTokenError(
+      console.warn(
         'Mapbox token missing. Set EXPO_PUBLIC_MAPBOX_PUBLIC_TOKEN in .env or app.json -> extra.mapboxPublicToken.',
       );
       return;
     }
     Mapbox.setAccessToken(MAPBOX_TOKEN);
   }, []);
-
-  if (tokenError) {
-    return (
-      <View style={[styles.center, { backgroundColor: P.parchment, padding: 24 }]}>
-        <Text style={[styles.errorText, { color: P.red }]}>{tokenError}</Text>
-        <StatusBar style="dark" />
-      </View>
-    );
-  }
 
   return (
     <ThemeProvider>
@@ -164,5 +153,4 @@ export default function App() {
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  errorText: { textAlign: 'center', fontSize: 15, fontFamily: 'Inter', lineHeight: 22 },
 });
